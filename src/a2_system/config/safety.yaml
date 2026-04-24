@@ -1,0 +1,12 @@
+safety_supervisor:
+  ros__parameters:
+    lidar_topic: /mid360/points
+    robot_state_topic: /robot_state
+    map_topic: /map
+    localization_status_topic: /a2/localization_ok
+    allow_motion_topic: /a2/allow_motion
+    map_ready_topic: /a2/map_ready
+    estop_topic: /a2/estop
+    lidar_timeout_sec: 0.5
+    state_timeout_sec: 0.5
+    map_timeout_sec: 5.0

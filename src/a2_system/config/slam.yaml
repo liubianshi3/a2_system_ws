@@ -1,0 +1,12 @@
+slam_manager:
+  ros__parameters:
+    mode: external_odom
+    external_stack_profile: external_odom
+    pointcloud_topic: /mid360/points
+    imu_topic: /imu/data
+    odom_topic: /odom
+    odom_topic_candidates: [/odom]
+    map_frame: map
+    odom_frame: odom
+    base_frame: base_link
+    project_to_nav2_map: true

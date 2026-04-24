@@ -1,0 +1,10 @@
+mock_map_publisher:
+  ros__parameters:
+    map_topic: /map
+    frame_id: map
+    width: 120
+    height: 120
+    resolution: 0.1
+    publish_rate_hz: 1.0
+    reveal_radius_m: 1.2
+    odom_topic: /odom

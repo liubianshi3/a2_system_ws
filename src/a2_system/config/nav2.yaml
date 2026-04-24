@@ -1,0 +1,5 @@
+goal_bridge:
+  ros__parameters:
+    exploration_goal_topic: /a2/exploration/goal
+    navigate_action_name: navigate_to_pose
+    goal_timeout_sec: 180.0

@@ -1,0 +1,16 @@
+mid360_driver:
+  driver:
+    xfer_format: 1
+    multi_topic: 0
+    data_src: 0
+    publish_freq: 10.0
+    output_data_type: 0
+    frame_id: lidar_link
+    lvx_file_path: ""
+    cmdline_input_bd_code: ""
+  relay:
+    custom_msg_topic: /livox/lidar
+    pointcloud_input_topic: /livox/lidar
+    pointcloud_output_topic: /mid360/points
+    frame_id: lidar_link
+    prefer_custom_msg: true

@@ -1,0 +1,10 @@
+slam_orchestrator:
+  ros__parameters:
+    use_mock: true
+    default_mode: mapping
+    publish_identity_map_odom: true
+    stack_profile: external_odom
+    stack_available: false
+    stack_blocked_reason: ""
+    status_timeout_sec: 1.0
+    external_odom_topics: [/odom]

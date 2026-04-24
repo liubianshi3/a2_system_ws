@@ -1,0 +1,7 @@
+map_manager:
+  ros__parameters:
+    map_root: ${HOME}/a2_system_ws/runtime/maps
+    occupancy_topic: /map
+    active_map_topic: /a2/map_manager/active_map
+    mode_topic: /a2/system_mode
+    default_mode: mapping
