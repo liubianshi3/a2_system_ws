@@ -30,6 +30,8 @@ class SafetySupervisor(Node):
         self.map_transient_local = bool(
             self.declare_parameter("map_transient_local", self.latch_map_ready).value
         )
+        self.map_representation = self.declare_parameter("map_representation", "occupancy_grid_2d").value
+        self.require_map = bool(self.declare_parameter("require_map", True).value)
         self.require_localization = bool(self.declare_parameter("require_localization", True).value)
 
         self.last_lidar = None
@@ -61,6 +63,8 @@ class SafetySupervisor(Node):
 
     def on_lidar(self, _msg):
         self.last_lidar = self.get_clock().now()
+        if self.map_representation == "pointcloud_map_3d" and not self.require_map:
+            self.last_map = self.last_lidar
 
     def on_state(self, msg):
         self.last_state = self.get_clock().now()
@@ -78,9 +82,12 @@ class SafetySupervisor(Node):
     def evaluate(self):
         lidar_ok = self.fresh(self.last_lidar, self.lidar_timeout_sec)
         state_ok = self.fresh(self.last_state, self.state_timeout_sec)
-        map_ready = self.last_map is not None if self.latch_map_ready else self.fresh(
-            self.last_map, self.map_timeout_sec
-        )
+        if not self.require_map:
+            map_ready = lidar_ok
+        else:
+            map_ready = self.last_map is not None if self.latch_map_ready else self.fresh(
+                self.last_map, self.map_timeout_sec
+            )
         localization_ready = self.localization_ok or not self.require_localization
         allow_motion = lidar_ok and state_ok and map_ready and localization_ready
         estop = not lidar_ok or not state_ok

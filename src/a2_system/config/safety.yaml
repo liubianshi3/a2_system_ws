@@ -3,6 +3,8 @@ safety_supervisor:
     lidar_topic: /mid360/points
     robot_state_topic: /robot_state
     map_topic: /map
+    map_representation: pointcloud_map_3d
+    require_map: false
     localization_status_topic: /a2/localization_ok
     allow_motion_topic: /a2/allow_motion
     map_ready_topic: /a2/map_ready

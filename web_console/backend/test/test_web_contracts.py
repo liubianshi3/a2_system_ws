@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from backend.config import load_config
 from backend.models import CameraFrame, DashboardSnapshot
-from backend.stack_control import MAPPING_NODES, NAVIGATION_NODES, STACK_CLEANUP_PATTERNS
+from backend.stack_control import MAPPING_NODES, NAVIGATION_NODES_3D, STACK_CLEANUP_PATTERNS
 
 
 def test_dashboard_snapshot_contains_camera_contract():
@@ -26,18 +26,21 @@ def test_default_config_exposes_camera_topics():
     assert config.ros.camera_image_topic == "/camera/image_raw"
     assert config.navigation.initial_pose_wait_timeout_sec >= 5.0
     assert config.navigation.initial_pose_publish_interval_sec > 0.0
+    assert config.navigation.backend == "pose_topic_3d"
+    assert config.navigation.goal_topic == "/goal_pose_"
+    assert config.navigation.require_map_for_goal is False
     assert config.native_slam.enabled is True
     assert config.native_slam.request_topic == "/api/slam_operate/request"
     assert config.native_slam.response_topic == "/api/slam_operate/response"
     assert config.native_slam.response_timeout_sec >= 1.0
 
 
-def test_navigation_contract_uses_amcl_not_manual_localization():
-    labels = {label for _, label, _ in NAVIGATION_NODES}
-    patterns = {pattern for _, _, pattern in NAVIGATION_NODES}
+def test_navigation_contract_uses_3d_pose_backend_not_amcl_by_default():
+    labels = {label for _, label, _ in NAVIGATION_NODES_3D}
+    patterns = {pattern for _, _, pattern in NAVIGATION_NODES_3D}
 
-    assert "AMCL localization" in labels
-    assert "amcl" in patterns
+    assert "3D localization gate" in labels
+    assert "localization_gate" in patterns
     assert "manual localization" not in labels
     assert "manual_localization_publisher" not in patterns
     assert "amcl" in STACK_CLEANUP_PATTERNS

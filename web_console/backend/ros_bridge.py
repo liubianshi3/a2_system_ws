@@ -204,6 +204,8 @@ class RosBridgeNode(Node):
         self.health = SystemHealth(ros_connected=True)
         self._last_tf_frame: str | None = None
         self._last_camera_publish_monotonic = 0.0
+        self._active_pose_goal: NavigationGoal | None = None
+        self._active_pose_goal_started_at: float | None = None
         self._native_slam_response_cv = threading.Condition()
         self._native_slam_responses: dict[int, dict[str, Any]] = {}
         self.manage_map_client = None
@@ -220,6 +222,11 @@ class RosBridgeNode(Node):
         self.initial_pose_publisher = self.create_publisher(
             PoseWithCovarianceStamped,
             self.config.navigation.initial_pose_topic,
+            10,
+        )
+        self.pose_goal_publisher = self.create_publisher(
+            PoseStamped,
+            self.config.navigation.goal_topic,
             10,
         )
         self.native_slam_publisher = None
@@ -240,10 +247,10 @@ class RosBridgeNode(Node):
             self.get_logger().warning(
                 "unitree_api.msg.Request is unavailable. Native SLAM commands will be disabled."
             )
-        self.action_client = (
-            ActionClient(self, NavigateToPose, self.config.navigation.action_name) if NavigateToPose is not None else None
-        )
-        if self.action_client is None:
+        self.action_client = None
+        if self.config.navigation.backend == "nav2" and NavigateToPose is not None:
+            self.action_client = ActionClient(self, NavigateToPose, self.config.navigation.action_name)
+        if self.config.navigation.backend == "nav2" and self.action_client is None:
             self.get_logger().warning("nav2_msgs.action.NavigateToPose is unavailable. Navigation controls will be disabled.")
         health_period = max(0.2, 1.0 / max(self.config.health.health_broadcast_hz, 0.1))
         self.create_timer(health_period, self._publish_health)
@@ -681,11 +688,64 @@ class RosBridgeNode(Node):
         self._publish("health", self.get_health_dict())
 
     def _publish_health(self) -> None:
+        self._update_pose_topic_goal()
         with self._lock:
-            self.health.action_server_ready = bool(self.action_client and self.action_client.server_is_ready())
-            self.navigation.action_server_ready = self.health.action_server_ready
+            if self.config.navigation.backend == "pose_topic_3d":
+                self.health.action_server_ready = True
+                self.navigation.backend = "pose_topic_3d"
+                self.navigation.action_server_ready = True
+            else:
+                self.health.action_server_ready = bool(self.action_client and self.action_client.server_is_ready())
+                self.navigation.backend = "nav2"
+                self.navigation.action_server_ready = self.health.action_server_ready
         self._publish("health", self.get_health_dict())
         self._publish("navigation", dump_model(self.navigation))
+
+    def _update_pose_topic_goal(self) -> None:
+        with self._lock:
+            active_goal = deep_copy_model(self._active_pose_goal)
+            started_at = self._active_pose_goal_started_at
+            pose = deep_copy_model(self.pose)
+        if self.config.navigation.backend != "pose_topic_3d" or active_goal is None:
+            return
+        if started_at is None:
+            started_at = time.monotonic()
+        if not pose.available or pose.x is None or pose.y is None:
+            with self._lock:
+                self.navigation.feedback = {"reason": "pose_unavailable"}
+                self.navigation.updated_at = now_iso()
+            return
+
+        dx = float(pose.x) - active_goal.x
+        dy = float(pose.y) - active_goal.y
+        distance = math.hypot(dx, dy)
+        yaw_error = None
+        if pose.yaw is not None:
+            yaw_error = abs(math.atan2(math.sin(float(pose.yaw) - active_goal.yaw), math.cos(float(pose.yaw) - active_goal.yaw)))
+        elapsed = time.monotonic() - started_at
+        feedback = {
+            "distance_remaining": distance,
+            "yaw_error_rad": yaw_error,
+            "elapsed_sec": elapsed,
+            "backend": "pose_topic_3d",
+        }
+        reached = distance <= self.config.navigation.pose_goal_tolerance_m and (
+            yaw_error is None or yaw_error <= self.config.navigation.pose_goal_yaw_tolerance_rad
+        )
+        timed_out = elapsed > self.config.navigation.goal_timeout_sec
+        with self._lock:
+            self.navigation.feedback = feedback
+            self.navigation.updated_at = now_iso()
+            if reached:
+                self.navigation.state = "succeeded"
+                self.navigation.message = "3D 位姿目标已到达"
+                self._active_pose_goal = None
+                self._active_pose_goal_started_at = None
+            elif timed_out:
+                self.navigation.state = "failed"
+                self.navigation.message = "3D 位姿目标超时"
+                self._active_pose_goal = None
+                self._active_pose_goal_started_at = None
 
     def get_health_dict(self) -> dict[str, Any]:
         with self._lock:
@@ -781,12 +841,14 @@ class RosBridgeNode(Node):
         with self._navigation_lock:
             if not self.config.navigation.allow_send_goal:
                 raise RosBridgeError("导航发送在配置中被禁用")
-            if self.status.localization_ok is not True:
+            if self.config.navigation.require_localization_ready and self.status.localization_ok is not True:
                 raise RosBridgeError("定位未就绪，禁止发送导航目标")
-            if not self.map_snapshot.loaded:
+            if self.config.navigation.require_map_for_goal and not self.map_snapshot.loaded:
                 raise RosBridgeError("地图尚未加载完成")
-            if self._active_goal_handle is not None:
+            if self._active_goal_handle is not None or self._active_pose_goal is not None:
                 raise RosBridgeError("已有导航任务正在执行")
+            if self.config.navigation.backend == "pose_topic_3d":
+                return self._send_pose_topic_goal(request.goal)
             if self.action_client is None or NavigateToPose is None:
                 raise RosBridgeError("NavigateToPose action client 不可用")
             if not self.action_client.wait_for_server(timeout_sec=self.config.navigation.action_wait_timeout_sec):
@@ -861,8 +923,42 @@ class RosBridgeNode(Node):
                 raise RosBridgeError(str(result_box["error"]))
             return deep_copy_model(self.navigation)
 
+    def _send_pose_topic_goal(self, requested_goal: NavigationGoal) -> NavigationTaskState:
+        goal = requested_goal
+        if not goal.frame_id:
+            goal = goal.model_copy(update={"frame_id": self.config.navigation.goal_frame})
+        msg = PoseStamped()
+        msg.header.frame_id = goal.frame_id or self.config.navigation.goal_frame
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.pose.position.x = goal.x
+        msg.pose.position.y = goal.y
+        msg.pose.orientation.z = math.sin(goal.yaw / 2.0)
+        msg.pose.orientation.w = math.cos(goal.yaw / 2.0)
+        self.pose_goal_publisher.publish(msg)
+        with self._lock:
+            self._active_pose_goal = goal
+            self._active_pose_goal_started_at = time.monotonic()
+            self.navigation = NavigationTaskState(
+                state="navigating",
+                message=f"3D 位姿目标已发布到 {self.config.navigation.goal_topic}",
+                backend="pose_topic_3d",
+                action_server_ready=True,
+                goal=goal,
+                feedback={},
+                updated_at=now_iso(),
+            )
+        self._publish("navigation", dump_model(self.navigation))
+        return deep_copy_model(self.navigation)
+
     def set_initial_pose(self, request: InitialPoseRequest) -> dict[str, Any]:
         with self._navigation_lock:
+            if self.config.navigation.backend == "pose_topic_3d":
+                return {
+                    "pose": dump_model(request.pose),
+                    "snapped": False,
+                    "attempts": 0,
+                    "message": "3D 定位模式使用外部定位里程计，不需要发送 AMCL 初始位姿",
+                }
             if not self.map_snapshot.loaded:
                 raise RosBridgeError("地图尚未加载完成")
 
@@ -954,6 +1050,22 @@ class RosBridgeNode(Node):
 
     def cancel_navigation(self) -> NavigationTaskState:
         with self._navigation_lock:
+            if self.config.navigation.backend == "pose_topic_3d":
+                if self._active_pose_goal is None:
+                    with self._lock:
+                        self.navigation.state = "idle"
+                        self.navigation.message = "当前没有活动 3D 位姿目标"
+                        self.navigation.updated_at = now_iso()
+                    self._publish("navigation", dump_model(self.navigation))
+                    return deep_copy_model(self.navigation)
+                with self._lock:
+                    self._active_pose_goal = None
+                    self._active_pose_goal_started_at = None
+                    self.navigation.state = "canceled"
+                    self.navigation.message = "3D 位姿目标已在 Web 状态中取消"
+                    self.navigation.updated_at = now_iso()
+                self._publish("navigation", dump_model(self.navigation))
+                return deep_copy_model(self.navigation)
             if self._active_goal_handle is None:
                 with self._lock:
                     self.navigation.state = "idle"

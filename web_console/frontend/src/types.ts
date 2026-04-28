@@ -93,6 +93,7 @@ export interface NavigationGoal {
 export interface NavigationTaskState {
   state: string;
   message: string | null;
+  backend: string;
   action_server_ready: boolean;
   goal: NavigationGoal | null;
   feedback: Record<string, unknown>;

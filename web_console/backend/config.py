@@ -22,7 +22,7 @@ class RosTopicConfig:
     map_topic: str = "/map"
     pointcloud_topic: str = "/unitree/slam_lidar/points1"
     manage_map_service: str = "/map_manager/manage_map"
-    localization_pose_topic: str = "/uslam/localization/odom"
+    localization_pose_topic: str = "/odom"
     localization_pose_msg_type: str = "nav_msgs/msg/Odometry"
     odom_topic: str = "/odom"
     tf_topic: str = "/tf"
@@ -50,14 +50,22 @@ class CameraConfig:
 
 @dataclass
 class NavigationConfig:
+    backend: str = "pose_topic_3d"
     action_name: str = "/navigate_to_pose"
+    goal_topic: str = "/goal_pose_"
+    goal_frame: str = "map"
     initial_pose_topic: str = "/initialpose"
     action_wait_timeout_sec: float = 3.0
     goal_response_timeout_sec: float = 5.0
+    goal_timeout_sec: float = 180.0
     cancel_timeout_sec: float = 3.0
     initial_pose_wait_timeout_sec: float = 8.0
     initial_pose_publish_interval_sec: float = 0.4
     allow_send_goal: bool = True
+    require_map_for_goal: bool = False
+    require_localization_ready: bool = True
+    pose_goal_tolerance_m: float = 0.35
+    pose_goal_yaw_tolerance_rad: float = 0.35
     occupancy_block_threshold: int = 65
     goal_snap_radius_m: float = 1.5
     goal_clearance_m: float = 0.18

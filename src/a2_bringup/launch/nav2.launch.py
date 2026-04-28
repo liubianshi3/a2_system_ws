@@ -44,6 +44,11 @@ def _launch_setup(context, *args, **kwargs):
     use_sim_time_text = str(use_sim_time).lower()
     a2_system_share = get_package_share_directory("a2_system")
     pointcloud_scan_input_topic = _pointcloud_scan_input_topic(a2_system_share, runtime_mode)
+    slam_params = _load_yaml(f"{a2_system_share}/config/slam.yaml").get("slam_manager", {}).get(
+        "ros__parameters", {}
+    )
+    navigation_representation = str(slam_params.get("navigation_representation", "occupancy_grid_2d"))
+    use_3d_navigation = runtime_mode == "real" and navigation_representation == "pointcloud_map_3d"
     if runtime_mode == "gazebo" and not map_yaml:
         gazebo_bridge_share = get_package_share_directory("gazebo_bridge")
         if gazebo_world:
@@ -91,7 +96,7 @@ def _launch_setup(context, *args, **kwargs):
             )
         )
 
-    if enable_nav2_bringup:
+    if enable_nav2_bringup and not use_3d_navigation:
         actions.append(
             Node(
                 package="mid360_wrapper",
@@ -123,7 +128,7 @@ def _launch_setup(context, *args, **kwargs):
 
     try:
         nav2_share = get_package_share_directory("nav2_bringup")
-        if enable_nav2_bringup:
+        if enable_nav2_bringup and not use_3d_navigation:
             if not map_yaml:
                 actions.append(
                     LogInfo(

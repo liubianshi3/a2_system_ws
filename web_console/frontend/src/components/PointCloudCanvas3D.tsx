@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 
-import type { MapArtifactInfo, PointCloudSnapshot, SavedMapInfo } from "../types";
+import type { MapArtifactInfo, NavigationGoal, PointCloudSnapshot, SavedMapInfo } from "../types";
 
 interface PointCloudCanvas3DProps {
   pointcloud: PointCloudSnapshot | null;
   selectedMap: SavedMapInfo | null;
+  selectedGoal: NavigationGoal | null;
+  activeGoal: NavigationGoal | null;
+  onSelectGoal: (goal: NavigationGoal) => void;
 }
 
 interface View3DState {
@@ -20,9 +23,16 @@ interface Point3D {
   z: number;
 }
 
-export function PointCloudCanvas3D({ pointcloud, selectedMap }: PointCloudCanvas3DProps) {
+export function PointCloudCanvas3D({
+  pointcloud,
+  selectedMap,
+  selectedGoal,
+  activeGoal,
+  onSelectGoal,
+}: PointCloudCanvas3DProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const dragRef = useRef({ active: false, x: 0, y: 0 });
+  const projectedRef = useRef<ProjectedPoint[]>([]);
   const [view, setView] = useState<View3DState>({ yaw: 0.8, pitch: -0.45, zoom: 72 });
   const [artifactPoints, setArtifactPoints] = useState<Point3D[]>([]);
   const [artifactState, setArtifactState] = useState("等待 3D 资产");
@@ -117,6 +127,7 @@ export function PointCloudCanvas3D({ pointcloud, selectedMap }: PointCloudCanvas
       .map((point) => projectPoint(point, center, view, canvas.clientWidth, canvas.clientHeight))
       .filter((point): point is ProjectedPoint => point !== null)
       .sort((left, right) => left.depth - right.depth);
+    projectedRef.current = projected;
 
     for (const point of projected) {
       context.globalAlpha = point.alpha;
@@ -124,7 +135,9 @@ export function PointCloudCanvas3D({ pointcloud, selectedMap }: PointCloudCanvas
       context.fillRect(point.x, point.y, point.size, point.size);
     }
     context.globalAlpha = 1;
-  }, [artifactPoints, livePoints, sourcePoints, view]);
+    drawGoalMarker(context, selectedGoal, projected, "#f59e0b");
+    drawGoalMarker(context, activeGoal, projected, "#22c55e");
+  }, [activeGoal, artifactPoints, livePoints, selectedGoal, sourcePoints, view]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -165,6 +178,34 @@ export function PointCloudCanvas3D({ pointcloud, selectedMap }: PointCloudCanvas
     dragRef.current.active = false;
   };
 
+  const handleDoubleClick = (event: ReactMouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas || projectedRef.current.length === 0) {
+      return;
+    }
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    let best: ProjectedPoint | null = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const point of projectedRef.current) {
+      const distance = Math.hypot(point.x - x, point.y - y);
+      if (distance < bestDistance) {
+        best = point;
+        bestDistance = distance;
+      }
+    }
+    if (!best || bestDistance > 24) {
+      return;
+    }
+    onSelectGoal({
+      x: best.world.x,
+      y: best.world.y,
+      yaw: 0,
+      frame_id: pointcloud?.frame_id || "map",
+    });
+  };
+
   return (
     <div className="map-shell pointcloud-shell">
       <canvas
@@ -174,6 +215,7 @@ export function PointCloudCanvas3D({ pointcloud, selectedMap }: PointCloudCanvas
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
+        onDoubleClick={handleDoubleClick}
       />
       <div className="map-overlay pointcloud-overlay">
         <span>{`3D source: ${sourceLabel}`}</span>
@@ -191,6 +233,7 @@ interface ProjectedPoint {
   size: number;
   alpha: number;
   color: string;
+  world: Point3D;
 }
 
 function parseAsciiPcd(text: string, maxPoints: number): Point3D[] {
@@ -274,7 +317,42 @@ function projectPoint(
     size,
     alpha,
     color: `hsl(${hue}, 85%, 72%)`,
+    world: point,
   };
+}
+
+function drawGoalMarker(
+  context: CanvasRenderingContext2D,
+  goal: NavigationGoal | null,
+  projected: ProjectedPoint[],
+  color: string,
+) {
+  if (!goal) {
+    return;
+  }
+  let best: ProjectedPoint | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const point of projected) {
+    const distance = Math.hypot(point.world.x - goal.x, point.world.y - goal.y);
+    if (distance < bestDistance) {
+      best = point;
+      bestDistance = distance;
+    }
+  }
+  if (!best) {
+    return;
+  }
+  context.save();
+  context.strokeStyle = color;
+  context.lineWidth = 2;
+  context.beginPath();
+  context.arc(best.x, best.y, 8, 0, Math.PI * 2);
+  context.moveTo(best.x - 12, best.y);
+  context.lineTo(best.x + 12, best.y);
+  context.moveTo(best.x, best.y - 12);
+  context.lineTo(best.x, best.y + 12);
+  context.stroke();
+  context.restore();
 }
 
 function drawGrid(context: CanvasRenderingContext2D, width: number, height: number) {

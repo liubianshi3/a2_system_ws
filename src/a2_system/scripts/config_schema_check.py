@@ -140,6 +140,7 @@ def audit_localization(result: AuditResult, config_dir: Path) -> None:
         "localization_gate.ros__parameters",
         [
             "input_pose_topic",
+            "input_pose_msg_type",
             "status_topic",
             "status_report_topic",
             "max_pose_age_sec",
@@ -148,9 +149,16 @@ def audit_localization(result: AuditResult, config_dir: Path) -> None:
             "pose_transient_local",
         ],
     )
-    result.require(params.get("input_pose_topic") == "/amcl_pose", "localization_gate input must be /amcl_pose")
+    result.require(params.get("input_pose_topic") == "/odom", "localization_gate input must be /odom in 3D-first mode")
+    result.require(
+        params.get("input_pose_msg_type") == "nav_msgs/msg/Odometry",
+        "localization_gate input_pose_msg_type must be nav_msgs/msg/Odometry",
+    )
     result.require(params.get("status_topic") == "/a2/localization_ok", "localization status topic mismatch")
-    result.require(bool(params.get("pose_transient_local", False)), "localization_gate must use transient local AMCL subscription")
+    result.require(
+        not bool(params.get("pose_transient_local", True)),
+        "localization_gate must use volatile QoS for /odom in 3D-first mode",
+    )
     result.require(float(params.get("max_pose_age_sec", 999.0)) <= 10.0, "localization max_pose_age_sec too loose")
     result.require(float(params.get("max_xy_variance", 999.0)) <= 0.20, "localization max_xy_variance too loose")
     result.require(float(params.get("max_yaw_variance", 999.0)) <= 0.15, "localization max_yaw_variance too loose")
@@ -188,12 +196,12 @@ def audit_real_mapping_stack(result: AuditResult, config_dir: Path) -> None:
     slam_params = get(slam_cfg, "slam_manager", "ros__parameters", default={})
     mapping_profile = str(slam_params.get("mapping_stack_profile", "") or "").strip()
     result.require(
-        mapping_profile in {"slam_toolbox", "native_global_map", "projected_occupancy"},
-        "slam.yaml mapping_stack_profile must be one of slam_toolbox/native_global_map/projected_occupancy",
+        mapping_profile in {"front_lidar_pointcloud_3d", "slam_toolbox", "native_global_map", "projected_occupancy"},
+        "slam.yaml mapping_stack_profile must be a known 3D-first or legacy fallback profile",
     )
     result.require(
-        mapping_profile == "slam_toolbox",
-        "slam.yaml must default real mapping_stack_profile to slam_toolbox",
+        mapping_profile == "front_lidar_pointcloud_3d",
+        "slam.yaml must default real mapping_stack_profile to front_lidar_pointcloud_3d",
     )
 
     toolbox_cfg = load_yaml_unique(config_dir / "slam_toolbox_mapping.yaml")

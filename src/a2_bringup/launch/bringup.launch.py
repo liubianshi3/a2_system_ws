@@ -70,6 +70,11 @@ def _launch_setup(context, *args, **kwargs):
     bringup_share = get_package_share_directory("a2_bringup")
     unitree_ddsc_env = _unitree_ddsc_env(runtime_mode)
     real_lidar_topic = _real_lidar_consumer_topic(a2_system_share, runtime_mode)
+    slam_params = _load_yaml(f"{a2_system_share}/config/slam.yaml").get("slam_manager", {}).get(
+        "ros__parameters", {}
+    )
+    map_representation = str(slam_params.get("primary_map_representation", "occupancy_grid_2d"))
+    require_map_for_safety = map_representation != "pointcloud_map_3d"
 
     actions = []
     if runtime_mode == "gazebo":
@@ -147,6 +152,8 @@ def _launch_setup(context, *args, **kwargs):
                 "runtime_mode": runtime_mode,
                 "latch_map_ready": enable_nav2_bringup_bool,
                 "map_transient_local": enable_nav2_bringup_bool,
+                "map_representation": map_representation,
+                "require_map": require_map_for_safety,
                 "use_sim_time": use_sim_time,
             }],
         ),

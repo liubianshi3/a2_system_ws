@@ -72,6 +72,7 @@ function createEmptySnapshot(): DashboardSnapshot {
     navigation: {
       state: "idle",
       message: null,
+      backend: "pose_topic_3d",
       action_server_ready: false,
       goal: null,
       feedback: {},
@@ -241,16 +242,21 @@ export default function App() {
   }, [websocketError]);
 
   const poseAgeMs = snapshot.pose.stamp ? Date.now() - Date.parse(snapshot.pose.stamp) : Number.POSITIVE_INFINITY;
-  const canSendGoal =
-    stack?.mode === "navigation" &&
-    snapshot.map.loaded &&
-    snapshot.status.localization_ok === true &&
-    snapshot.health.action_server_ready &&
-    poseAgeMs < 10000;
-  const canSetInitialPose = stack?.mode === "navigation" && snapshot.map.loaded && snapshot.navigation.state !== "navigating";
-  const stackTransitioning = stackBusy || stack?.mode === "starting" || stack?.mode === "stopping";
   const selectedMap = maps.find((map) => map.map_id === selectedMapId) ?? null;
   const use3DViewer = snapshot.pointcloud.loaded || Boolean(selectedMap?.has_pointcloud_3d);
+  const navigationUses3D = snapshot.navigation.backend === "pose_topic_3d" || use3DViewer;
+  const canSendGoal =
+    stack?.mode === "navigation" &&
+    snapshot.status.localization_ok === true &&
+    snapshot.health.action_server_ready &&
+    poseAgeMs < 10000 &&
+    (navigationUses3D ? snapshot.pose.available : snapshot.map.loaded);
+  const canSetInitialPose =
+    stack?.mode === "navigation" &&
+    !navigationUses3D &&
+    snapshot.map.loaded &&
+    snapshot.navigation.state !== "navigating";
+  const stackTransitioning = stackBusy || stack?.mode === "starting" || stack?.mode === "stopping";
 
   const refreshStack = async () => {
     const [status, health] = await Promise.all([
@@ -402,7 +408,13 @@ export default function App() {
         </header>
 
         {use3DViewer ? (
-          <PointCloudCanvas3D pointcloud={snapshot.pointcloud.loaded ? snapshot.pointcloud : null} selectedMap={selectedMap} />
+          <PointCloudCanvas3D
+            pointcloud={snapshot.pointcloud.loaded ? snapshot.pointcloud : null}
+            selectedMap={selectedMap}
+            selectedGoal={selectedGoal}
+            activeGoal={snapshot.navigation.goal}
+            onSelectGoal={setSelectedGoal}
+          />
         ) : (
           <MapCanvas
             map={snapshot.map.loaded ? snapshot.map : null}

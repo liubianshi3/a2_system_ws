@@ -2,6 +2,8 @@ task_manager:
   ros__parameters:
     route_root: ${A2_WORKSPACE}/runtime/routes
     map_frame: map
+    navigation_backend: pose_topic_3d
+    pose_goal_topic: /goal_pose_
     navigate_action_name: /navigate_to_pose
     manage_map_service: /map_manager/manage_map
     set_mode_service: /map_manager/set_mode

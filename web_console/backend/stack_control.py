@@ -63,6 +63,15 @@ NAVIGATION_NODES: list[tuple[str, str, PatternSpec]] = [
     ("lifecycle", "lifecycle manager", "lifecycle_manager"),
 ]
 
+NAVIGATION_NODES_3D: list[tuple[str, str, PatternSpec]] = [
+    ("bringup", "bringup.launch.py", "bringup.launch.py"),
+    ("sdk", "a2_sdk_bridge", "a2_sdk_bridge_node"),
+    ("control", "a2_control_bridge", "a2_control_bridge_node"),
+    ("localization", "3D localization gate", "localization_gate"),
+    ("goal_bridge", "3D goal bridge", "goal_bridge"),
+    ("map_manager", "3D map manager", "map_manager_node"),
+]
+
 STACK_CLEANUP_PATTERNS = [
     "bringup.launch.py",
     "a2_state_publisher_node",
@@ -247,17 +256,19 @@ class StackController:
             message=f"导航模式启动中: {map_info.map_id}",
         )
 
+        use_3d_navigation = self._is_3d_navigation_map(map_info)
         try:
             result = self._run(
-                [str(self.start_script), self.config.stack.network_interface],
+                [str(self.start_script), self.config.stack.network_interface, "enable_control_bridge:=true"],
                 env={
-                    "A2_ENABLE_NAV2": "true",
-                    "A2_REAL_LOCALIZATION_MODE": "amcl",
+                    "A2_ENABLE_NAV2": "false" if use_3d_navigation else "true",
+                    "A2_REAL_LOCALIZATION_MODE": "uslam_odom" if use_3d_navigation else "amcl",
                     "A2_MAP_YAML": map_info.map_yaml,
                 },
             )
             self._wait_for_expected_nodes("navigation")
-            self._ensure_navigation_lifecycle_ready()
+            if not use_3d_navigation:
+                self._ensure_navigation_lifecycle_ready()
         except Exception as exc:
             self._terminate_runtime_processes()
             self._write_runtime_state(
@@ -288,8 +299,33 @@ class StackController:
         profile = str(params.get("mapping_stack_profile", "") or "").strip()
         return profile or "slam_toolbox"
 
+    def navigation_representation(self) -> str:
+        slam_cfg = self._read_yaml(self.a2_system_config_dir / "slam.yaml")
+        params = slam_cfg.get("slam_manager", {}).get("ros__parameters", {}) or {}
+        return str(params.get("navigation_representation", "") or "").strip()
+
+    def _is_3d_navigation_map(self, map_info: SavedMapInfo | None = None) -> bool:
+        if self.navigation_representation() == "pointcloud_map_3d":
+            return True
+        if map_info is None:
+            return False
+        return bool(map_info.has_pointcloud_3d or map_info.representation == "pointcloud_map_3d")
+
+    def _expected_nodes_for_mode(self, mode: str) -> list[tuple[str, str, PatternSpec]]:
+        if mode == "navigation":
+            if self._is_3d_navigation_map():
+                return NAVIGATION_NODES_3D
+            return NAVIGATION_NODES
+        if self.mapping_source_profile() == "front_lidar_pointcloud_3d":
+            return [
+                item
+                for item in MAPPING_NODES
+                if item[0] != "map_source"
+            ]
+        return MAPPING_NODES
+
     def _wait_for_expected_nodes(self, mode: str) -> None:
-        expected = NAVIGATION_NODES if mode == "navigation" else MAPPING_NODES
+        expected = self._expected_nodes_for_mode(mode)
         deadline = time.monotonic() + self.start_timeout
         missing_labels: list[str] = []
         stable_polls = 0
@@ -563,17 +599,17 @@ class StackController:
         if runtime_mode in {"starting", "stopping"}:
             mode = runtime_mode
             expected_mode = target_mode or inferred_mode
-        elif inferred_mode != "stopped":
-            mode = inferred_mode
-            expected_mode = inferred_mode
         elif runtime_mode in {"mapping", "navigation"}:
             mode = runtime_mode
             expected_mode = runtime_mode
+        elif inferred_mode != "stopped":
+            mode = inferred_mode
+            expected_mode = inferred_mode
         else:
             mode = "stopped"
             expected_mode = "stopped"
 
-        expected = NAVIGATION_NODES if expected_mode == "navigation" else MAPPING_NODES if expected_mode == "mapping" else []
+        expected = self._expected_nodes_for_mode(expected_mode) if expected_mode in {"mapping", "navigation"} else []
         nodes = [
             NodeCheck(
                 key=key,
@@ -596,11 +632,15 @@ class StackController:
         )
 
     def _infer_mode(self, processes: list[ProcessInfo]) -> str:
-        has_nav = any("bt_navigator" in proc.args or "controller_server" in proc.args for proc in processes)
+        has_nav = any(
+            "bt_navigator" in proc.args
+            or "controller_server" in proc.args
+            for proc in processes
+        )
         has_mapping = any(
             self._matches_pattern(proc.args, pattern)
             for proc in processes
-            for pattern in ("occupancy_mapper", "native_map_relay", "slam_toolbox")
+            for pattern in ("occupancy_mapper", "native_map_relay", "slam_toolbox", "map_manager_node")
         )
         has_bringup = any("bringup.launch.py" in proc.args for proc in processes)
         if has_nav:
@@ -759,7 +799,7 @@ class StackController:
         return candidates[-1]
 
     def _describe_process(self, process: ProcessInfo) -> str:
-        for _, label, pattern in NAVIGATION_NODES + MAPPING_NODES:
+        for _, label, pattern in NAVIGATION_NODES + NAVIGATION_NODES_3D + MAPPING_NODES:
             if self._matches_pattern(process.args, pattern):
                 return label
         return f"pid={process.pid}"

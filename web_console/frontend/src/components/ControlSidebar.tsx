@@ -128,7 +128,8 @@ export function ControlSidebar({
         <h2>任务状态</h2>
         <TaskStateChip state={navigation?.state ?? "idle"} />
         <p className="panel-message">{formatNullable(navigation?.message)}</p>
-        <StatusMini label="action server" value={navigation?.action_server_ready ? "ready" : "unavailable"} />
+        <StatusMini label="backend" value={formatNullable(navigation?.backend)} />
+        <StatusMini label="goal backend" value={navigation?.action_server_ready ? "ready" : "unavailable"} />
         <StatusMini
           label="distance remaining"
           value={formatNullable(

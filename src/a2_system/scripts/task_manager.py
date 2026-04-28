@@ -223,6 +223,8 @@ class TaskManager(Node):
             "runtime_mode", "mock" if self.use_mock else "real"
         ).value
         self.map_frame = self.declare_parameter("map_frame", "map").value
+        self.navigation_backend = self.declare_parameter("navigation_backend", "pose_topic_3d").value
+        self.pose_goal_topic = self.declare_parameter("pose_goal_topic", "/goal_pose_").value
         self.navigate_action_name = self.declare_parameter("navigate_action_name", "/navigate_to_pose").value
         self.manage_map_service = self.declare_parameter("manage_map_service", "/map_manager/manage_map").value
         self.set_mode_service = self.declare_parameter("set_mode_service", "/map_manager/set_mode").value
@@ -260,6 +262,7 @@ class TaskManager(Node):
 
         self.status_pub = self.create_publisher(String, self.task_status_topic, 10)
         self.report_pub = self.create_publisher(String, self.task_report_topic, 10)
+        self.pose_goal_pub = self.create_publisher(PoseStamped, self.pose_goal_topic, 10)
         self.initial_pose_pub = self.create_publisher(PoseWithCovarianceStamped, self.initial_pose_topic, 10)
         self.create_subscription(String, self.active_map_topic, self.on_active_map, 10)
         self.create_subscription(String, self.nav_status_topic, self.on_nav_status, 10)
@@ -288,7 +291,7 @@ class TaskManager(Node):
                 self.navigate_action_name,
                 callback_group=self.callback_group,
             )
-            if NavigateToPose is not None
+            if NavigateToPose is not None and self.navigation_backend == "nav2"
             else None
         )
         self.create_timer(0.5, self.poll_route_process)
@@ -397,6 +400,11 @@ class TaskManager(Node):
         return response
 
     def send_goal(self, pose: PoseStamped) -> str:
+        if self.navigation_backend == "pose_topic_3d":
+            normalized = self.ensure_pose(pose)
+            self.pose_goal_pub.publish(normalized)
+            self.publish_status("goal_active", f"pose_topic_goal_published:{self.pose_goal_topic}")
+            return "3D pose goal published"
         if self.navigate_client is None or NavigateToPose is None:
             raise RuntimeError("NavigateToPose action client unavailable")
         if self._active_goal_handle is not None:

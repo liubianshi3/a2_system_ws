@@ -21,6 +21,7 @@ from nav_msgs.msg import OccupancyGrid, Odometry
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from sensor_msgs.msg import PointCloud2
 from std_msgs.msg import Bool, Float32, String
 
 try:
@@ -87,8 +88,10 @@ class AutoScanMission(Node):
             )
         )
         self.map_topic = self.declare_parameter("map_topic", "/map").value
-        self.pose_topic = self.declare_parameter("pose_topic", "/amcl_pose").value
+        self.pose_topic = self.declare_parameter("pose_topic", "/odom").value
+        self.pose_msg_type = self.declare_parameter("pose_msg_type", "nav_msgs/msg/Odometry").value
         self.odom_topic = self.declare_parameter("odom_topic", "/odom").value
+        self.pointcloud_topic = self.declare_parameter("pointcloud_topic", "/unitree/slam_lidar/points1").value
         self.localization_ok_topic = self.declare_parameter("localization_ok_topic", "/a2/localization_ok").value
         self.localization_status_topic = self.declare_parameter(
             "localization_status_topic", "/a2/localization/status"
@@ -108,11 +111,13 @@ class AutoScanMission(Node):
         self.goal_frame = self.declare_parameter("goal_frame", "map").value
         self.require_map_frame = bool(self.declare_parameter("require_map_frame", True).value)
         self.validate_waypoints_against_map = bool(
-            self.declare_parameter("validate_waypoints_against_map", True).value
+            self.declare_parameter("validate_waypoints_against_map", False).value
         )
         self.allow_unknown_cells = bool(self.declare_parameter("allow_unknown_cells", False).value)
         self.occupied_threshold = int(self.declare_parameter("occupied_threshold", 65).value)
         self.min_clearance_cells = int(self.declare_parameter("min_clearance_cells", 0).value)
+        self.navigation_backend = self.declare_parameter("navigation_backend", "pose_topic_3d").value
+        self.pose_goal_topic = self.declare_parameter("pose_goal_topic", "/goal_pose_").value
         self.navigate_action_name = self.declare_parameter("navigate_action_name", "/navigate_to_pose").value
         self.manage_map_service = self.declare_parameter("manage_map_service", "/map_manager/manage_map").value
         self.set_mode_service = self.declare_parameter("set_mode_service", "/map_manager/set_mode").value
@@ -141,6 +146,7 @@ class AutoScanMission(Node):
         self.yaw_warn_threshold_rad = float(self.declare_parameter("yaw_warn_threshold_rad", 0.30).value)
 
         self.map_received = False
+        self.pointcloud_received = False
         self.latest_map: OccupancyGrid | None = None
         self.latest_pose: PoseWithCovarianceStamped | None = None
         self.latest_odom: Odometry | None = None
@@ -160,6 +166,7 @@ class AutoScanMission(Node):
         self.report_pub = self.create_publisher(String, self.mission_report_topic, 10)
         self.progress_pub = self.create_publisher(Float32, self.mission_progress_topic, 10)
         self.goal_pub = self.create_publisher(PoseStamped, self.mission_goal_topic, 10)
+        self.pose_goal_pub = self.create_publisher(PoseStamped, self.pose_goal_topic, 10)
 
         transient_qos = QoSProfile(
             depth=1,
@@ -167,8 +174,12 @@ class AutoScanMission(Node):
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
         )
         self.create_subscription(OccupancyGrid, self.map_topic, self.on_map, transient_qos)
-        self.create_subscription(PoseWithCovarianceStamped, self.pose_topic, self.on_pose, transient_qos)
+        if self.pose_msg_type == "nav_msgs/msg/Odometry":
+            self.create_subscription(Odometry, self.pose_topic, self.on_odom, 20)
+        else:
+            self.create_subscription(PoseWithCovarianceStamped, self.pose_topic, self.on_pose, transient_qos)
         self.create_subscription(Odometry, self.odom_topic, self.on_odom, 20)
+        self.create_subscription(PointCloud2, self.pointcloud_topic, self.on_pointcloud, 10)
         self.create_subscription(Bool, self.localization_ok_topic, self.on_localization_ok, 10)
         self.create_subscription(String, self.localization_status_topic, self.on_localization_status, 10)
         self.create_subscription(String, self.real_report_topic, self.on_real_report, 10)
@@ -180,7 +191,7 @@ class AutoScanMission(Node):
         self.set_mode_client = self.create_client(SetMode, self.set_mode_service)
         self.navigate_client = (
             ActionClient(self, NavigateToPose, self.navigate_action_name)
-            if NavigateToPose is not None
+            if NavigateToPose is not None and self.navigation_backend == "nav2"
             else None
         )
 
@@ -196,6 +207,9 @@ class AutoScanMission(Node):
     def on_map(self, msg: OccupancyGrid) -> None:
         self.latest_map = msg
         self.map_received = True
+
+    def on_pointcloud(self, _msg: PointCloud2) -> None:
+        self.pointcloud_received = True
 
     def on_pose(self, msg: PoseWithCovarianceStamped) -> None:
         self.latest_pose = msg
@@ -411,12 +425,19 @@ class AutoScanMission(Node):
         return all_valid
 
     def current_pose_dict(self) -> dict[str, Any] | None:
-        if self.latest_pose is None:
-            return None
-        pose = self.latest_pose.pose.pose
-        covariance = self.latest_pose.pose.covariance
+        if self.latest_pose is not None:
+            pose = self.latest_pose.pose.pose
+            covariance = self.latest_pose.pose.covariance
+            frame_id = self.latest_pose.header.frame_id
+        else:
+            latest_odom = getattr(self, "latest_odom", None)
+            if latest_odom is None:
+                return None
+            pose = latest_odom.pose.pose
+            covariance = latest_odom.pose.covariance
+            frame_id = latest_odom.header.frame_id
         return {
-            "frame_id": self.latest_pose.header.frame_id,
+            "frame_id": frame_id,
             "x": float(pose.position.x),
             "y": float(pose.position.y),
             "yaw": quaternion_to_yaw(pose.orientation),
@@ -430,19 +451,25 @@ class AutoScanMission(Node):
         return fields.get("ready", "false").lower() == "true"
 
     def preflight_ready(self) -> tuple[bool, str]:
-        if self.navigate_client is None or NavigateToPose is None:
+        if self.navigation_backend == "nav2" and (self.navigate_client is None or NavigateToPose is None):
             return False, "navigate_action_type_missing"
-        if not self.map_received or self.latest_map is None:
+        if self.navigation_backend == "pose_topic_3d" and not self.pointcloud_received:
+            return False, "pointcloud_missing"
+        if self.navigation_backend == "nav2" and (not self.map_received or self.latest_map is None):
             return False, "map_missing"
-        if self.require_map_frame and self.latest_map.header.frame_id and self.latest_map.header.frame_id != self.goal_frame:
+        if self.navigation_backend == "nav2" and self.require_map_frame and self.latest_map.header.frame_id and self.latest_map.header.frame_id != self.goal_frame:
             return False, "map_frame_mismatch"
-        if self.latest_pose is None:
+        if self.current_pose_dict() is None:
             return False, "pose_missing"
         if self.require_localization_ready and not self.localization_ok:
             return False, "localization_not_ready"
         if self.require_real_ready and not self.real_ready():
             return False, "real_readiness_not_ready"
-        if (not self.dry_run or self.dry_run_require_action_server) and not self.navigate_client.wait_for_server(timeout_sec=0.1):
+        if (
+            self.navigation_backend == "nav2"
+            and (not self.dry_run or self.dry_run_require_action_server)
+            and not self.navigate_client.wait_for_server(timeout_sec=0.1)
+        ):
             return False, "navigate_action_not_ready"
         return True, "ok"
 
@@ -514,6 +541,15 @@ class AutoScanMission(Node):
             total=total,
         )
 
+        if self.navigation_backend == "pose_topic_3d":
+            return self.execute_pose_topic_waypoint(
+                waypoint,
+                target,
+                start_time,
+                localization_drops_before,
+                real_not_ready_before,
+            )
+
         goal = NavigateToPose.Goal()
         goal.pose = target
         self.last_feedback_distance = None
@@ -554,6 +590,44 @@ class AutoScanMission(Node):
             waypoint,
             state,
             status_code == GoalStatus.STATUS_SUCCEEDED,
+            start_time,
+            localization_drops_before,
+            real_not_ready_before,
+        )
+
+    def execute_pose_topic_waypoint(
+        self,
+        waypoint: WaypointSpec,
+        target: PoseStamped,
+        start_time: float,
+        localization_drops_before: int,
+        real_not_ready_before: int,
+    ) -> dict[str, Any]:
+        self.pose_goal_pub.publish(target)
+        deadline = time.monotonic() + self.goal_result_timeout_sec
+        while rclpy.ok() and time.monotonic() < deadline:
+            pose = self.current_pose_dict()
+            if pose is not None:
+                distance = math.hypot(float(pose["x"]) - waypoint.x, float(pose["y"]) - waypoint.y)
+                yaw_error = abs(normalize_angle(float(pose["yaw"]) - waypoint.yaw))
+                self.last_feedback_distance = distance
+                if distance <= self.position_pass_threshold_m and yaw_error <= self.yaw_pass_threshold_rad:
+                    if waypoint.dwell_sec > 0.0:
+                        self.spin_for(waypoint.dwell_sec)
+                    self.spin_for(self.settle_time_sec)
+                    return self.finish_waypoint_result(
+                        waypoint,
+                        "succeeded",
+                        True,
+                        start_time,
+                        localization_drops_before,
+                        real_not_ready_before,
+                    )
+            rclpy.spin_once(self, timeout_sec=0.1)
+        return self.finish_waypoint_result(
+            waypoint,
+            "goal_result_timeout",
+            False,
             start_time,
             localization_drops_before,
             real_not_ready_before,

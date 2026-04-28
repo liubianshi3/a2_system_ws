@@ -57,6 +57,8 @@ class GoalBridge(Node):
             "runtime_mode", "mock" if self.use_mock else "real"
         ).value
         self.goal_topic = self.declare_parameter("exploration_goal_topic", "/a2/exploration/goal").value
+        self.navigation_backend = self.declare_parameter("navigation_backend", "pose_topic_3d").value
+        self.pose_goal_topic = self.declare_parameter("pose_goal_topic", "/goal_pose_").value
         self.action_name = self.declare_parameter("navigate_action_name", "navigate_to_pose").value
         self.goal_timeout_sec = float(self.declare_parameter("goal_timeout_sec", 180.0).value)
         self.action_wait_timeout_sec = float(self.declare_parameter("action_wait_timeout_sec", 0.5).value)
@@ -69,6 +71,7 @@ class GoalBridge(Node):
             self.declare_parameter("cancel_active_goal_on_new_goal", False).value
         )
         self.status_pub = self.create_publisher(String, "/a2/nav2/status", 10)
+        self.pose_goal_pub = self.create_publisher(PoseStamped, self.pose_goal_topic, 10)
         self.action_client = None
         self.navigate_type = None
         self.active_goal_handle = None
@@ -76,16 +79,26 @@ class GoalBridge(Node):
         try:
             from nav2_msgs.action import NavigateToPose
 
-            self.navigate_type = NavigateToPose
-            self.action_client = ActionClient(self, NavigateToPose, self.action_name)
+            if self.navigation_backend == "nav2":
+                self.navigate_type = NavigateToPose
+                self.action_client = ActionClient(self, NavigateToPose, self.action_name)
         except ImportError:
-            self.get_logger().error("nav2_msgs is not available. Goal bridge will stay idle until Nav2 is installed.")
+            if self.navigation_backend == "nav2":
+                self.get_logger().error("nav2_msgs is not available. Goal bridge will stay idle until Nav2 is installed.")
 
         self.create_subscription(PoseStamped, self.goal_topic, self.on_goal, 10)
         self.create_timer(0.5, self.watchdog)
 
     def on_goal(self, msg):
         if self.use_mock:
+            return
+        if self.navigation_backend == "pose_topic_3d":
+            sanitized_goal, reason = self.sanitize_goal(msg)
+            if sanitized_goal is None:
+                self.publish_status(False, "goal_rejected", reason)
+                return
+            self.pose_goal_pub.publish(sanitized_goal)
+            self.publish_status(True, "goal_sent", f"{reason};backend=pose_topic_3d;topic={self.pose_goal_topic}")
             return
         if self.action_client is None or self.navigate_type is None:
             self.publish_status(False, "bridge_unavailable", "nav2_msgs_missing")

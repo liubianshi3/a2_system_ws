@@ -23,7 +23,7 @@ export function StatusSidebar({
     status?.localization_ok !== true
       ? "localization lost"
       : pose?.available && poseAgeMs > 2000
-        ? "amcl stale"
+        ? "pose stale"
         : "localization ok";
 
   return (
@@ -81,7 +81,7 @@ export function StatusSidebar({
         <StatusRow label="map received" value={health?.map_received ? "true" : "false"} />
         <StatusRow label="pose received" value={health?.pose_received ? "true" : "false"} />
         <StatusRow label="camera received" value={health?.camera_received ? "true" : "false"} />
-        <StatusRow label="action ready" value={health?.action_server_ready ? "true" : "false"} />
+        <StatusRow label="goal backend" value={health?.action_server_ready ? "true" : "false"} />
         <StatusRow label="last error" value={formatNullable(health?.last_error)} />
       </section>
     </aside>
