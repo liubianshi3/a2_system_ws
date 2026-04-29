@@ -670,3 +670,49 @@ Current branch: `master`
 ### Remaining risks or follow-ups
 - Need run a final verification set before commit.
 - Need push after commit and verify the remote branch updates successfully.
+
+### Time
+2026-04-29 18:12:00 CST
+
+### Action taken
+Committed and pushed the prepared A2 3D mapping/navigation/Web Console code to the existing Codeup remote.
+
+### Tool or method used
+- `git fetch codeup master`
+- `python3 -m py_compile ...`
+- `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest ...`
+- `npm run build`
+- `git diff --cached --check`
+- `git commit`
+- `git push codeup master`
+
+### Why this approach
+The remote branch was not ahead of local (`HEAD...codeup/master` was `0 0` before the commit), so a normal fast-forward push was the correct upload path. Generated frontend build artifacts and unrelated Vikunja files were intentionally excluded.
+
+### Problems encountered
+- `git diff --cached --check` reported trailing whitespace in Markdown logs/docs.
+- Frontend build generated local TypeScript/Vite output files that should not be committed.
+
+### Fixes applied
+- Removed trailing whitespace from:
+  - `agent-logs/2026-04-27-agent-session.md`
+  - `src/a2_system/docs/a2_2d_to_3d_debug_journey.md`
+- Added frontend generated files to `.gitignore`:
+  - `web_console/frontend/*.tsbuildinfo`
+  - `web_console/frontend/vite.config.d.ts`
+  - `web_console/frontend/vite.config.js`
+- Left unrelated untracked Vikunja files out of the commit.
+
+### Current result
+Created commit:
+`10da493 feat: harden JT128 3D mapping navigation web stack`
+
+Push result:
+`359e7bd..10da493 master -> master`
+
+Remote:
+`git@codeup.aliyun.com:601416f22a8cae58be1e7201/feishuyz/device-navigation.git`
+
+### Remaining risks or follow-ups
+- This log update itself happened after the code push and still needs a small follow-up commit/push if the remote should include the final upload record.
+- Unrelated untracked Vikunja files remain local and intentionally unuploaded.
