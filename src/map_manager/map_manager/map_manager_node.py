@@ -3,6 +3,7 @@
 import math
 import os
 import struct
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -19,10 +20,7 @@ from std_msgs.msg import String
 class MapManagerNode(Node):
     def __init__(self):
         super().__init__("map_manager")
-        self.use_mock = bool(self.declare_parameter("use_mock", True).value)
-        self.runtime_mode = self.declare_parameter(
-            "runtime_mode", "mock" if self.use_mock else "real"
-        ).value
+        self.runtime_mode = self.declare_parameter("runtime_mode", "real").value
         raw_map_root = self.declare_parameter("map_root", "/tmp/a2_maps").value
         self.map_root = Path(os.path.expandvars(os.path.expanduser(raw_map_root)))
         self.occupancy_topic = self.declare_parameter("occupancy_topic", "/map").value
@@ -30,8 +28,14 @@ class MapManagerNode(Node):
             "map_representation", "occupancy_grid_2d"
         ).value
         self.pointcloud_topic_3d = self.declare_parameter(
-            "pointcloud_topic_3d", "/unitree/slam_lidar/points1"
+            "pointcloud_topic_3d", "/grid_clouds"
         ).value
+        self.pointcloud_fallback_topic_3d = self.declare_parameter(
+            "pointcloud_fallback_topic_3d", "/jt128/front/points"
+        ).value
+        self.pointcloud_primary_stale_sec = float(
+            self.declare_parameter("pointcloud_primary_stale_sec", 2.0).value
+        )
         self.pointcloud_snapshot_enabled = bool(
             self.declare_parameter("pointcloud_snapshot_enabled", True).value
         )
@@ -50,7 +54,10 @@ class MapManagerNode(Node):
             self.declare_parameter("map_transient_local", False).value
         )
         self.latest_map = None
-        self.latest_pointcloud = None
+        self.latest_pointcloud_primary = None
+        self.latest_pointcloud_primary_monotonic = 0.0
+        self.latest_pointcloud_fallback = None
+        self.latest_pointcloud_fallback_monotonic = 0.0
         self.active_map_id = ""
         self.last_status = ""
 
@@ -72,8 +79,18 @@ class MapManagerNode(Node):
         )
         if self.pointcloud_snapshot_enabled:
             self.create_subscription(
-                PointCloud2, self.pointcloud_topic_3d, self.on_pointcloud, 10
+                PointCloud2, self.pointcloud_topic_3d, self.on_primary_pointcloud, 10
             )
+            if (
+                self.pointcloud_fallback_topic_3d
+                and self.pointcloud_fallback_topic_3d != self.pointcloud_topic_3d
+            ):
+                self.create_subscription(
+                    PointCloud2,
+                    self.pointcloud_fallback_topic_3d,
+                    self.on_fallback_pointcloud,
+                    10,
+                )
         self.create_service(
             ManageMap, "/map_manager/manage_map", self.handle_manage_map
         )
@@ -87,11 +104,33 @@ class MapManagerNode(Node):
         if first_map:
             self.publish_status("ready", "map_received")
 
-    def on_pointcloud(self, msg):
-        first_cloud = self.latest_pointcloud is None
-        self.latest_pointcloud = msg
+    def on_primary_pointcloud(self, msg):
+        first_cloud = self.latest_pointcloud_primary is None
+        self.latest_pointcloud_primary = msg
+        self.latest_pointcloud_primary_monotonic = time.monotonic()
         if first_cloud and self.latest_map is None:
-            self.publish_status("ready", "pointcloud_received")
+            self.publish_status("ready", "pointcloud_primary_received")
+
+    def on_fallback_pointcloud(self, msg):
+        first_cloud = self.latest_pointcloud_fallback is None
+        self.latest_pointcloud_fallback = msg
+        self.latest_pointcloud_fallback_monotonic = time.monotonic()
+        if first_cloud and self.latest_map is None and self.latest_pointcloud_primary is None:
+            self.publish_status("ready", "pointcloud_fallback_received")
+
+    def selected_pointcloud(self):
+        now = time.monotonic()
+        if (
+            self.latest_pointcloud_primary is not None
+            and now - self.latest_pointcloud_primary_monotonic
+            <= self.pointcloud_primary_stale_sec
+        ):
+            return self.latest_pointcloud_primary, self.pointcloud_topic_3d
+        if self.pointcloud_fallback_topic_3d and self.latest_pointcloud_fallback is not None:
+            return self.latest_pointcloud_fallback, self.pointcloud_fallback_topic_3d
+        if self.latest_pointcloud_primary is not None:
+            return self.latest_pointcloud_primary, self.pointcloud_topic_3d
+        return None, None
 
     def publish_active(self):
         self.active_pub.publish(String(data=self.active_map_id))
@@ -125,7 +164,8 @@ class MapManagerNode(Node):
             self.publish_status("listed", f"count={len(response.map_ids)}")
             return response
         if command == "save":
-            if self.latest_map is None and self.latest_pointcloud is None:
+            selected_pointcloud, _ = self.selected_pointcloud()
+            if self.latest_map is None and selected_pointcloud is None:
                 response.success = False
                 response.message = "no map or pointcloud received yet"
                 self.publish_status("error", "no_map_or_pointcloud")
@@ -186,6 +226,7 @@ class MapManagerNode(Node):
         map_dir.mkdir(parents=True, exist_ok=True)
 
         artifacts = []
+        selected_pointcloud, selected_topic = self.selected_pointcloud()
         if self.latest_map is not None:
             self.write_nav2_map(self.latest_map, map_dir)
             artifacts.append(
@@ -196,38 +237,57 @@ class MapManagerNode(Node):
                     "resolution": float(self.latest_map.info.resolution),
                 }
             )
-        if self.pointcloud_snapshot_enabled and self.latest_pointcloud is not None:
+        if self.pointcloud_snapshot_enabled and selected_pointcloud is not None:
             artifacts.append(
-                self.write_pointcloud_snapshot(self.latest_pointcloud, map_dir)
+                self.write_pointcloud_snapshot(selected_pointcloud, map_dir, selected_topic)
             )
 
         metadata = {
             "created_at": datetime.now().isoformat(),
             "mode": self.current_mode,
             "representation": self.map_representation,
-            "source_topic": self.occupancy_topic,
+            "source_topic": self.occupancy_topic if self.latest_map is not None else None,
             "width": self.latest_map.info.width if self.latest_map is not None else None,
             "height": self.latest_map.info.height if self.latest_map is not None else None,
             "resolution": self.latest_map.info.resolution
             if self.latest_map is not None
             else None,
-            "pointcloud_topic_3d": self.pointcloud_topic_3d
-            if self.latest_pointcloud is not None
-            else None,
+            "pointcloud_topic_3d": selected_topic,
             "artifacts": artifacts,
         }
         with (map_dir / "metadata.yaml").open("w", encoding="utf-8") as handle:
             yaml.safe_dump(metadata, handle, sort_keys=False)
+        with (map_dir / "media_index.yaml").open("w", encoding="utf-8") as handle:
+            yaml.safe_dump(
+                {
+                    "entries": [
+                        {
+                            "path": artifact["path"],
+                            "kind": "pointcloud"
+                            if artifact["kind"] in {"pointcloud_snapshot_3d", "native_pointcloud_map_3d"}
+                            else "occupancy"
+                            if artifact["kind"] == "occupancy_grid_2d"
+                            else "other",
+                            "group": "root",
+                        }
+                        for artifact in artifacts
+                    ]
+                },
+                handle,
+                sort_keys=False,
+            )
         return map_id
 
     def publish_status(self, state, reason):
         mode = self.runtime_mode
-        ready = self.latest_map is not None or self.latest_pointcloud is not None
+        _, selected_topic = self.selected_pointcloud()
+        ready = self.latest_map is not None or selected_topic is not None
         status = (
             f"mode={mode};state={state};ready={str(bool(ready)).lower()};reason={reason};"
             f"system_mode={self.current_mode};active_map={self.active_map_id or 'none'};"
             f"representation={self.map_representation};source_topic={self.occupancy_topic};"
-            f"pointcloud_topic_3d={self.pointcloud_topic_3d}"
+            f"pointcloud_topic_3d={selected_topic or self.pointcloud_topic_3d};"
+            f"pointcloud_fallback_topic_3d={self.pointcloud_fallback_topic_3d}"
         )
         self.status_pub.publish(String(data=status))
         if status != self.last_status:
@@ -270,8 +330,10 @@ class MapManagerNode(Node):
         with yaml_path.open("w", encoding="utf-8") as handle:
             yaml.safe_dump(yaml_data, handle, sort_keys=False)
 
-    def write_pointcloud_snapshot(self, msg: PointCloud2, map_dir: Path) -> dict:
-        pcd_path = map_dir / "front_lidar_snapshot.pcd"
+    def write_pointcloud_snapshot(
+        self, msg: PointCloud2, map_dir: Path, topic_name: str | None
+    ) -> dict:
+        pcd_path = map_dir / "pointcloud_map_3d.pcd"
         x_field = next((field for field in msg.fields if field.name == "x"), None)
         y_field = next((field for field in msg.fields if field.name == "y"), None)
         z_field = next((field for field in msg.fields if field.name == "z"), None)
@@ -321,7 +383,7 @@ class MapManagerNode(Node):
         stamp = msg.header.stamp
         return {
             "kind": "pointcloud_snapshot_3d",
-            "topic": self.pointcloud_topic_3d,
+            "topic": topic_name,
             "path": pcd_path.name,
             "frame_id": msg.header.frame_id,
             "stamp_sec": int(stamp.sec),

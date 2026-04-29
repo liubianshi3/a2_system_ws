@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 
-import type { MapSnapshot, NavigationGoal, RobotPose } from "../types";
+import type { MapSnapshot, NavigationGoal, RobotPose, VirtualObstacleZone } from "../types";
 import { clamp, mapPixelToWorld, worldToMapPixel } from "../utils/map";
 
 interface MapCanvasProps {
   map: MapSnapshot | null;
   pose: RobotPose | null;
+  obstacles: VirtualObstacleZone[];
   selectedGoal: NavigationGoal | null;
   activeGoal: NavigationGoal | null;
   disabled: boolean;
@@ -22,6 +23,7 @@ interface ViewState {
 export function MapCanvas({
   map,
   pose,
+  obstacles,
   selectedGoal,
   activeGoal,
   disabled,
@@ -40,6 +42,17 @@ export function MapCanvas({
   const [view, setView] = useState<ViewState>({ zoom: 1.2, panX: 32, panY: 32 });
   const [hoverText, setHoverText] = useState("未悬停地图");
   const viewRef = useRef(view);
+
+  const resetView = () => {
+    setView({ zoom: 1.2, panX: 32, panY: 32 });
+  };
+
+  const zoomBy = (factor: number) => {
+    setView((current) => ({
+      ...current,
+      zoom: clamp(current.zoom * factor, 0.2, 12),
+    }));
+  };
 
   useEffect(() => {
     viewRef.current = view;
@@ -88,6 +101,12 @@ export function MapCanvas({
   }, [map]);
 
   useEffect(() => {
+    if (map?.loaded) {
+      resetView();
+    }
+  }, [map?.loaded, map?.width, map?.height, map?.resolution]);
+
+  useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) {
       return;
@@ -128,6 +147,11 @@ export function MapCanvas({
       if (selectedGoal) {
         drawGoal(context, map, selectedGoal, view, "#2563eb");
       }
+      if (obstacles.length > 0) {
+        for (const obstacle of obstacles) {
+          drawObstacle(context, map, obstacle, view);
+        }
+      }
       if (pose?.available && pose.x !== null && pose.y !== null && pose.yaw !== null) {
         drawRobot(context, map, pose, view);
       }
@@ -136,7 +160,7 @@ export function MapCanvas({
       context.font = "600 16px 'Segoe UI', sans-serif";
       context.fillText("地图尚未加载", 24, 36);
     }
-  }, [map, pose, selectedGoal, activeGoal, view]);
+  }, [map, pose, obstacles, selectedGoal, activeGoal, view]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -245,9 +269,31 @@ export function MapCanvas({
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
+        onMouseLeave={() => {
+          dragRef.current.active = false;
+        }}
       />
+      <div className="scene-card scene-card-left">
+        <div className="scene-card-title">2D 栅格地图</div>
+        <div className="scene-card-meta">{map?.frame_id ?? "frame=unknown"}</div>
+        <div className="scene-card-meta">
+          {map?.loaded ? `${map.width}x${map.height} @ ${map.resolution.toFixed(3)}m` : "等待地图"}
+        </div>
+      </div>
+      <div className="scene-toolbar scene-toolbar-top-right">
+        <button type="button" className="hud-button" onClick={() => zoomBy(1.18)}>
+          放大
+        </button>
+        <button type="button" className="hud-button" onClick={() => zoomBy(0.84)}>
+          缩小
+        </button>
+        <button type="button" className="hud-button" onClick={resetView}>
+          复位
+        </button>
+      </div>
       <div className="map-overlay">
         <span>{hoverText}</span>
+        <span>{selectedGoal ? `选点 ${selectedGoal.x.toFixed(2)}, ${selectedGoal.y.toFixed(2)}` : "单击地图选择目标/初始位姿"}</span>
         {disabled ? <span className="warning-chip">定位未就绪，禁止发送导航</span> : null}
       </div>
     </div>
@@ -313,4 +359,28 @@ function drawGoal(
   context.moveTo(screenX, screenY);
   context.lineTo(tipX, tipY);
   context.stroke();
+}
+
+function drawObstacle(
+  context: CanvasRenderingContext2D,
+  map: MapSnapshot,
+  obstacle: VirtualObstacleZone,
+  view: ViewState,
+) {
+  const point = worldToMapPixel(map, { x: obstacle.x, y: obstacle.y });
+  const screenX = view.panX + point.x * view.zoom;
+  const screenY = view.panY + point.y * view.zoom;
+  const radius = Math.max(6, (obstacle.radius / Math.max(map.resolution, 1e-6)) * view.zoom);
+
+  context.fillStyle = "rgba(239, 68, 68, 0.18)";
+  context.strokeStyle = "rgba(220, 38, 38, 0.88)";
+  context.lineWidth = 2;
+  context.beginPath();
+  context.arc(screenX, screenY, radius, 0, Math.PI * 2);
+  context.fill();
+  context.stroke();
+
+  context.fillStyle = "#991b1b";
+  context.font = "600 11px 'Segoe UI', sans-serif";
+  context.fillText(obstacle.label || obstacle.obstacle_id, screenX + radius + 6, screenY - 4);
 }

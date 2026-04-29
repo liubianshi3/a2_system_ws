@@ -2,7 +2,7 @@
 <package format="3">
   <name>a2_sdk_bridge</name>
   <version>0.1.0</version>
-  <description>SDK-first A2 sport state bridge with mock/real mode parity.</description>
+  <description>SDK-first A2 sport state bridge for the real robot runtime.</description>
 
   <maintainer email="dell@example.com">dell</maintainer>
   <license>Apache-2.0</license>

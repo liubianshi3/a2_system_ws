@@ -2,6 +2,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+import yaml
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -11,11 +16,98 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import load_config
-from .models import DashboardSnapshot, InitialPoseRequest, NavigationGoalRequest, SaveMapRequest, StartNavigationRequest
+from .models import (
+    DashboardSnapshot,
+    InitialPoseRequest,
+    MapMediaListing,
+    NavigationGoalRequest,
+    RunTaskRouteRequest,
+    SaveMapRequest,
+    SaveTaskRouteRequest,
+    StartNavigationRequest,
+    TaskRouteDetail,
+    TaskRouteSummary,
+    TaskRouteStatus,
+    VirtualObstacleListing,
+    VirtualObstacleUpsertRequest,
+)
 from .ros_bridge import RosBridgeError, RosRuntime
 from .stack_control import StackControlError, StackController
 from .utils import is_lan_or_loopback
 from .ws import WebSocketManager
+
+
+def _route_updated_at(route_path: str | None) -> str | None:
+    if not route_path:
+        return None
+    path = Path(route_path)
+    if not path.exists():
+        return None
+    return datetime.fromtimestamp(path.stat().st_mtime).isoformat()
+
+
+def _build_route_detail(route_id: str, route_path: str | None, route_yaml: str) -> TaskRouteDetail:
+    payload = yaml.safe_load(route_yaml or "") or {}
+    if not isinstance(payload, dict):
+        payload = {}
+    raw_waypoints = payload.get("waypoints")
+    waypoint_count = len(raw_waypoints) if isinstance(raw_waypoints, list) else 0
+    mission_name = payload.get("mission_name")
+    return TaskRouteDetail(
+        route_id=route_id,
+        route_path=route_path,
+        mission_name=str(mission_name).strip() if mission_name else None,
+        waypoint_count=waypoint_count,
+        updated_at=_route_updated_at(route_path),
+        route_yaml=route_yaml,
+    )
+
+
+def _build_route_summary(route_id: str, route_path: str | None, route_yaml: str) -> TaskRouteSummary:
+    detail = _build_route_detail(route_id, route_path, route_yaml)
+    return TaskRouteSummary(
+        route_id=detail.route_id,
+        route_path=detail.route_path,
+        mission_name=detail.mission_name,
+        waypoint_count=detail.waypoint_count,
+        updated_at=detail.updated_at,
+    )
+
+
+def _validate_route_yaml_against_virtual_obstacles(
+    stack_controller: StackController,
+    map_id: str | None,
+    route_yaml: str,
+    *,
+    clearance_m: float,
+) -> None:
+    normalized_map_id = (map_id or "").strip()
+    if not normalized_map_id:
+        return
+    payload = yaml.safe_load(route_yaml or "") or {}
+    if not isinstance(payload, dict):
+        raise StackControlError("路线 YAML 必须是包含 waypoints 的映射")
+    waypoints = payload.get("waypoints")
+    if not isinstance(waypoints, list):
+        return
+    for index, waypoint in enumerate(waypoints, start=1):
+        if not isinstance(waypoint, dict):
+            raise StackControlError(f"路线点 #{index} 不是合法映射")
+        try:
+            x = float(waypoint["x"])
+            y = float(waypoint["y"])
+        except KeyError as exc:
+            raise StackControlError(f"路线点 #{index} 缺少字段: {exc}") from exc
+        except (TypeError, ValueError) as exc:
+            raise StackControlError(f"路线点 #{index} 坐标不是数字") from exc
+        waypoint_id = str(waypoint.get("id") or waypoint.get("name") or f"wp_{index:02d}")
+        stack_controller.validate_point_outside_virtual_obstacles(
+            normalized_map_id,
+            x=x,
+            y=y,
+            subject=f"路线点 {waypoint_id}",
+            padding=clearance_m,
+        )
 
 
 def create_app(config_path: str | None = None) -> FastAPI:
@@ -77,6 +169,17 @@ def create_app(config_path: str | None = None) -> FastAPI:
         node = ros_runtime.node
         if node is None:
             raise HTTPException(status_code=503, detail="ROS runtime 未启动")
+        if request.map_id:
+            try:
+                stack_controller.validate_point_outside_virtual_obstacles(
+                    request.map_id,
+                    x=request.goal.x,
+                    y=request.goal.y,
+                    subject="导航目标",
+                    padding=config.navigation.goal_clearance_m,
+                )
+            except StackControlError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
         try:
             state = await asyncio.to_thread(node.send_navigation_goal, request)
         except RosBridgeError as exc:
@@ -99,6 +202,17 @@ def create_app(config_path: str | None = None) -> FastAPI:
         node = ros_runtime.node
         if node is None:
             raise HTTPException(status_code=503, detail="ROS runtime 未启动")
+        if request.map_id:
+            try:
+                stack_controller.validate_point_outside_virtual_obstacles(
+                    request.map_id,
+                    x=request.pose.x,
+                    y=request.pose.y,
+                    subject="初始位姿",
+                    padding=config.navigation.initial_pose_clearance_m,
+                )
+            except StackControlError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
         try:
             result = await asyncio.to_thread(node.set_initial_pose, request)
         except RosBridgeError as exc:
@@ -156,6 +270,34 @@ def create_app(config_path: str | None = None) -> FastAPI:
     async def list_maps():
         return {"maps": jsonable_encoder(stack_controller.list_maps())}
 
+    @app.get("/api/maps/{map_id}/media", response_model=MapMediaListing)
+    async def list_map_media(map_id: str):
+        try:
+            return await asyncio.to_thread(stack_controller.list_map_media, map_id)
+        except StackControlError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/maps/{map_id}/obstacles", response_model=VirtualObstacleListing)
+    async def list_map_obstacles(map_id: str):
+        try:
+            return await asyncio.to_thread(stack_controller.list_virtual_obstacles, map_id)
+        except StackControlError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/maps/{map_id}/obstacles", response_model=VirtualObstacleListing)
+    async def save_map_obstacle(map_id: str, request: VirtualObstacleUpsertRequest):
+        try:
+            return await asyncio.to_thread(stack_controller.save_virtual_obstacle, map_id, request)
+        except StackControlError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.delete("/api/maps/{map_id}/obstacles/{obstacle_id}", response_model=VirtualObstacleListing)
+    async def delete_map_obstacle(map_id: str, obstacle_id: str):
+        try:
+            return await asyncio.to_thread(stack_controller.delete_virtual_obstacle, map_id, obstacle_id)
+        except StackControlError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
     @app.get("/api/maps/{map_id}/artifacts/{artifact_name}")
     async def get_map_artifact(map_id: str, artifact_name: str):
         map_info = stack_controller.get_map(map_id)
@@ -169,6 +311,16 @@ def create_app(config_path: str | None = None) -> FastAPI:
             raise HTTPException(status_code=403, detail="非法资产路径")
         return FileResponse(artifact_path)
 
+    @app.get("/api/maps/{map_id}/files/{relative_path:path}")
+    async def get_map_file(map_id: str, relative_path: str):
+        try:
+            file_path = await asyncio.to_thread(stack_controller.resolve_map_file, map_id, relative_path)
+        except StackControlError as exc:
+            detail = str(exc)
+            status_code = 403 if "非法" in detail else 404
+            raise HTTPException(status_code=status_code, detail=detail) from exc
+        return FileResponse(file_path)
+
     @app.post("/api/maps/save")
     async def save_map(request: SaveMapRequest):
         node = ros_runtime.node
@@ -180,6 +332,13 @@ def create_app(config_path: str | None = None) -> FastAPI:
             if stack_controller.status().mode == "mapping" and mapping_profile == "native_global_map":
                 native_save = await asyncio.to_thread(node.request_native_map_save, request.map_id)
             await asyncio.to_thread(node.save_managed_map, request.map_id)
+            if native_save is not None:
+                await asyncio.to_thread(
+                    stack_controller.attach_native_pointcloud_artifact,
+                    request.map_id,
+                    native_save["path"],
+                    pointcloud_topic_3d=config.ros.pointcloud_topic,
+                )
             saved = stack_controller.get_map(request.map_id)
             if saved is None:
                 raise StackControlError(f"地图已请求保存，但未在磁盘找到: {request.map_id}")
@@ -193,6 +352,110 @@ def create_app(config_path: str | None = None) -> FastAPI:
             "maps": jsonable_encoder(stack_controller.list_maps()),
             "native_slam_save": jsonable_encoder(native_save) if native_save is not None else None,
         }
+
+    @app.get("/api/tasks/routes")
+    async def list_task_routes():
+        node = ros_runtime.node
+        if node is None:
+            raise HTTPException(status_code=503, detail="ROS runtime 未启动")
+        try:
+            route_ids = await asyncio.to_thread(node.task_list_routes)
+            summaries: list[TaskRouteSummary] = []
+            for route_id in route_ids:
+                detail = await asyncio.to_thread(node.task_get_route, route_id)
+                summaries.append(
+                    _build_route_summary(detail["route_id"], detail["route_path"], detail["route_yaml"])
+                )
+            status = await asyncio.to_thread(node.task_route_status)
+        except RosBridgeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"routes": jsonable_encoder(summaries), "status": jsonable_encoder(status)}
+
+    @app.get("/api/tasks/routes/status", response_model=TaskRouteStatus)
+    async def get_task_route_status():
+        node = ros_runtime.node
+        if node is None:
+            raise HTTPException(status_code=503, detail="ROS runtime 未启动")
+        try:
+            return await asyncio.to_thread(node.task_route_status)
+        except RosBridgeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get("/api/tasks/routes/{route_id}", response_model=TaskRouteDetail)
+    async def get_task_route(route_id: str):
+        node = ros_runtime.node
+        if node is None:
+            raise HTTPException(status_code=503, detail="ROS runtime 未启动")
+        try:
+            detail = await asyncio.to_thread(node.task_get_route, route_id)
+        except RosBridgeError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return _build_route_detail(detail["route_id"], detail["route_path"], detail["route_yaml"])
+
+    @app.post("/api/tasks/routes", response_model=TaskRouteDetail)
+    async def save_task_route(request: SaveTaskRouteRequest):
+        node = ros_runtime.node
+        if node is None:
+            raise HTTPException(status_code=503, detail="ROS runtime 未启动")
+        try:
+            _validate_route_yaml_against_virtual_obstacles(
+                stack_controller,
+                request.map_id,
+                request.route_yaml,
+                clearance_m=config.navigation.goal_clearance_m,
+            )
+            detail = await asyncio.to_thread(node.task_save_route, request.route_id, request.route_yaml)
+        except (RosBridgeError, StackControlError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return _build_route_detail(detail["route_id"], detail["route_path"], detail["route_yaml"])
+
+    @app.delete("/api/tasks/routes/{route_id}")
+    async def delete_task_route(route_id: str):
+        node = ros_runtime.node
+        if node is None:
+            raise HTTPException(status_code=503, detail="ROS runtime 未启动")
+        try:
+            items = await asyncio.to_thread(node.task_delete_route, route_id)
+            status = await asyncio.to_thread(node.task_route_status)
+        except RosBridgeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"ok": True, "items": items, "status": jsonable_encoder(status)}
+
+    @app.post("/api/tasks/routes/run", response_model=TaskRouteStatus)
+    async def run_task_route(request: RunTaskRouteRequest):
+        node = ros_runtime.node
+        if node is None:
+            raise HTTPException(status_code=503, detail="ROS runtime 未启动")
+        try:
+            detail = await asyncio.to_thread(node.task_get_route, request.route_id)
+            _validate_route_yaml_against_virtual_obstacles(
+                stack_controller,
+                request.map_id,
+                detail["route_yaml"],
+                clearance_m=config.navigation.goal_clearance_m,
+            )
+            await asyncio.to_thread(
+                node.task_run_route,
+                route_id=request.route_id,
+                mission_name=request.mission_name or "",
+                dry_run=request.dry_run,
+                stop_on_failure=request.stop_on_failure,
+                save_map_on_finish=request.save_map_on_finish,
+                save_map_on_failure=request.save_map_on_failure,
+            )
+            return await asyncio.to_thread(node.task_route_status)
+        except (RosBridgeError, StackControlError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/tasks/routes/stop", response_model=TaskRouteStatus)
+    async def stop_task_route():
+        node = ros_runtime.node
+        if node is None:
+            raise HTTPException(status_code=503, detail="ROS runtime 未启动")
+        try:
+            return await asyncio.to_thread(node.task_stop_route)
+        except RosBridgeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.websocket(config.server.websocket_path)
     async def websocket_endpoint(websocket: WebSocket):

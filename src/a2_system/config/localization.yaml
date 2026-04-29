@@ -1,6 +1,6 @@
 localization_gate:
   ros__parameters:
-    input_pose_topic: /odom
+    input_pose_topic: /jt128/dlio/odom
     input_pose_msg_type: nav_msgs/msg/Odometry
     status_topic: /a2/localization_ok
     status_report_topic: /a2/localization/status

@@ -218,13 +218,10 @@ def build_auto_scan_command(
 class TaskManager(Node):
     def __init__(self) -> None:
         super().__init__("task_manager")
-        self.use_mock = bool(self.declare_parameter("use_mock", True).value)
-        self.runtime_mode = self.declare_parameter(
-            "runtime_mode", "mock" if self.use_mock else "real"
-        ).value
+        self.runtime_mode = self.declare_parameter("runtime_mode", "real").value
         self.map_frame = self.declare_parameter("map_frame", "map").value
         self.navigation_backend = self.declare_parameter("navigation_backend", "pose_topic_3d").value
-        self.pose_goal_topic = self.declare_parameter("pose_goal_topic", "/goal_pose_").value
+        self.pose_goal_topic = self.declare_parameter("pose_goal_topic", "/a2/nav3/goal_pose").value
         self.navigate_action_name = self.declare_parameter("navigate_action_name", "/navigate_to_pose").value
         self.manage_map_service = self.declare_parameter("manage_map_service", "/map_manager/manage_map").value
         self.set_mode_service = self.declare_parameter("set_mode_service", "/map_manager/set_mode").value

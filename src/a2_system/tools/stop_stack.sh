@@ -8,7 +8,7 @@ PATTERNS=(
   "a2_sdk_bridge_node"
   "a2_control_bridge_node"
   "task_manager.py"
-  "pointcloud_frame_relay"
+  "pointcloud_relay"
   "pointcloud_to_laserscan"
   "slam_toolbox"
   "native_map_relay"

@@ -54,7 +54,7 @@ export A2_WORKSPACE="${WORKSPACE}"
 export A2_NETWORK_INTERFACE="${IFACE}"
 export A2_ENABLE_NAV2=false
 export A2_REAL_LOCALIZATION_MODE=uslam_odom
-export A2_NATIVE_LIDAR_TOPIC="${A2_NATIVE_LIDAR_TOPIC:-/unitree/slam_lidar/points1}"
+export A2_NATIVE_LIDAR_TOPIC="${A2_NATIVE_LIDAR_TOPIC:-/jt128/front/points}"
 
 SCRIPT="${WORKSPACE}/install/a2_system/share/a2_system/start_web_console_suite.sh"
 if [[ ! -x "$SCRIPT" ]]; then

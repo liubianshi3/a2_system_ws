@@ -1,25 +1,66 @@
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 
 import {
   cancelNavigationGoal,
+  deleteMapObstacle,
+  deleteTaskRoute,
   fetchHealth,
+  fetchMapObstacles,
   fetchMaps,
   fetchSnapshot,
   fetchStackStatus,
+  fetchTaskRoute,
+  fetchTaskRoutes,
+  runTaskRoute,
   saveCurrentMap,
+  saveMapObstacle,
+  saveTaskRoute,
   sendInitialPose,
   sendNavigationGoal,
   startMappingStack,
   startNavigationStack,
+  stopTaskRoute,
   stopStack,
 } from "./api";
-import { CameraPanel } from "./components/CameraPanel";
-import { ControlSidebar } from "./components/ControlSidebar";
+import {
+  MapManagementSection,
+  ModeControlSection,
+  NavigationTaskSection,
+  ObstacleManagerSection,
+  RecentNoticeSection,
+  SelectedGoalSection,
+  TaskRouteManagerSection,
+  TaskStateChip,
+} from "./components/ControlSidebar";
 import { MapCanvas } from "./components/MapCanvas";
-import { PointCloudCanvas3D } from "./components/PointCloudCanvas3D";
-import { StatusSidebar } from "./components/StatusSidebar";
+import { MediaDock } from "./components/MediaDock";
+import {
+  ConnectionStatusSection,
+  HealthSection,
+  NodeStatusSection,
+  PoseSection,
+  RuntimeInfoSection,
+  SystemStatusSection,
+} from "./components/StatusSidebar";
 import { useBackendSocket } from "./hooks/useBackendSocket";
-import type { BackendEvent, DashboardSnapshot, NavigationGoal, SavedMapInfo, StackStatus } from "./types";
+import type {
+  BackendEvent,
+  DashboardSnapshot,
+  NavigationGoal,
+  SavedMapInfo,
+  StackStatus,
+  TaskRouteStatus,
+  TaskRouteSummary,
+  VirtualObstacleZone,
+} from "./types";
+
+const PointCloudCanvas3D = lazy(async () => ({
+  default: (await import("./components/PointCloudCanvas3D")).PointCloudCanvas3D,
+}));
+
+type DrawerKey = "task" | "map" | "nav" | "obstacle" | "function" | null;
+type ViewMode = "auto" | "2d" | "3d";
 
 function createEmptySnapshot(): DashboardSnapshot {
   return {
@@ -107,6 +148,33 @@ function createEmptySnapshot(): DashboardSnapshot {
   };
 }
 
+function createRouteTemplate(routeId: string, goal: NavigationGoal | null = null): string {
+  const waypointBlock = goal
+    ? `\n  - id: wp_01\n    x: ${goal.x.toFixed(3)}\n    y: ${goal.y.toFixed(3)}\n    yaw: ${goal.yaw.toFixed(3)}\n    dwell_sec: 0.0\n    note: selected goal`
+    : "";
+  return `mission_name: ${routeId || "route_demo"}\nwaypoints:${waypointBlock}\n`;
+}
+
+function appendGoalToRouteYaml(currentYaml: string, routeId: string, goal: NavigationGoal): string {
+  const trimmed = currentYaml.trimEnd();
+  const matches = [...trimmed.matchAll(/- id:\s*wp_(\d+)/g)];
+  const nextIndex = matches.length + 1;
+  const snippet =
+    `  - id: wp_${String(nextIndex).padStart(2, "0")}\n` +
+    `    x: ${goal.x.toFixed(3)}\n` +
+    `    y: ${goal.y.toFixed(3)}\n` +
+    `    yaw: ${goal.yaw.toFixed(3)}\n` +
+    `    dwell_sec: 0.0\n` +
+    `    note: selected goal`;
+  if (!trimmed) {
+    return createRouteTemplate(routeId, goal);
+  }
+  if (!trimmed.includes("waypoints:")) {
+    return `${trimmed}\nwaypoints:\n${snippet}\n`;
+  }
+  return `${trimmed}\n${snippet}\n`;
+}
+
 export default function App() {
   const [snapshot, setSnapshot] = useState<DashboardSnapshot>(createEmptySnapshot());
   const [selectedGoal, setSelectedGoal] = useState<NavigationGoal | null>(null);
@@ -122,6 +190,20 @@ export default function App() {
   const [backendConnected, setBackendConnected] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const [lastSuccess, setLastSuccess] = useState<string | null>(null);
+  const [activeDrawer, setActiveDrawer] = useState<DrawerKey>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>("auto");
+  const [showMediaDock, setShowMediaDock] = useState(true);
+  const [selectedPointcloudPath, setSelectedPointcloudPath] = useState<string | null>(null);
+  const [routes, setRoutes] = useState<TaskRouteSummary[]>([]);
+  const [routeStatus, setRouteStatus] = useState<TaskRouteStatus | null>(null);
+  const [selectedRouteId, setSelectedRouteId] = useState("");
+  const [routeDraftId, setRouteDraftId] = useState("office_loop");
+  const [routeYaml, setRouteYaml] = useState("mission_name: office_loop\nwaypoints:\n");
+  const [routeBusy, setRouteBusy] = useState(false);
+  const [obstacles, setObstacles] = useState<VirtualObstacleZone[]>([]);
+  const [obstacleBusy, setObstacleBusy] = useState(false);
+  const [obstacleLabel, setObstacleLabel] = useState("");
+  const [obstacleRadius, setObstacleRadius] = useState("0.60");
 
   useEffect(() => {
     let cancelled = false;
@@ -178,6 +260,16 @@ export default function App() {
   }, [selectedMapId]);
 
   useEffect(() => {
+    if (!selectedMapId) {
+      return;
+    }
+    if (maps.some((map) => map.map_id === selectedMapId)) {
+      return;
+    }
+    setSelectedMapId(maps[0]?.map_id ?? "");
+  }, [maps, selectedMapId]);
+
+  useEffect(() => {
     if (stackBusy) {
       return undefined;
     }
@@ -194,6 +286,91 @@ export default function App() {
     }, 2500);
     return () => window.clearInterval(interval);
   }, [selectedMapId, stackBusy]);
+
+  const refreshRoutes = async () => {
+    const payload = await fetchTaskRoutes();
+    setRoutes(payload.routes);
+    setRouteStatus(payload.status);
+    if (!selectedRouteId && payload.status.route_id) {
+      setSelectedRouteId(payload.status.route_id);
+    }
+    return payload;
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    refreshRoutes()
+      .catch(() => undefined)
+      .finally(() => {
+        if (cancelled) {
+          return;
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (routeBusy) {
+      return undefined;
+    }
+    const interval = window.setInterval(() => {
+      refreshRoutes().catch(() => undefined);
+    }, 3000);
+    return () => window.clearInterval(interval);
+  }, [routeBusy, selectedRouteId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!selectedRouteId) {
+      return () => {
+        cancelled = true;
+      };
+    }
+    fetchTaskRoute(selectedRouteId)
+      .then((detail) => {
+        if (cancelled) {
+          return;
+        }
+        setRouteDraftId(detail.route_id);
+        setRouteYaml(detail.route_yaml);
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+        setLastError(error instanceof Error ? error.message : "加载路线失败");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedRouteId]);
+
+  const refreshObstacles = async (mapId: string) => {
+    const payload = await fetchMapObstacles(mapId);
+    setObstacles(payload.obstacles);
+    return payload;
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!selectedMapId) {
+      setObstacles([]);
+      return () => {
+        cancelled = true;
+      };
+    }
+    refreshObstacles(selectedMapId).catch((error) => {
+      if (cancelled) {
+        return;
+      }
+      setLastError(error instanceof Error ? error.message : "加载虚拟障碍物失败");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedMapId]);
 
   const { connected: websocketConnected, lastError: websocketError } = useBackendSocket({
     onEvent: (event: BackendEvent<unknown>) => {
@@ -243,13 +420,16 @@ export default function App() {
 
   const poseAgeMs = snapshot.pose.stamp ? Date.now() - Date.parse(snapshot.pose.stamp) : Number.POSITIVE_INFINITY;
   const selectedMap = maps.find((map) => map.map_id === selectedMapId) ?? null;
-  const use3DViewer = snapshot.pointcloud.loaded || Boolean(selectedMap?.has_pointcloud_3d);
-  const navigationUses3D = snapshot.navigation.backend === "pose_topic_3d" || use3DViewer;
+  const has3DViewerData = snapshot.pointcloud.loaded || Boolean(selectedMap?.has_pointcloud_3d);
+  const navigationUses3D = snapshot.navigation.backend === "pose_topic_3d" || has3DViewerData;
+  const localizationReason =
+    snapshot.status.localization_status.reason ?? snapshot.status.localization_status.state ?? null;
+  const poseFresh = poseAgeMs < 10000;
   const canSendGoal =
     stack?.mode === "navigation" &&
     snapshot.status.localization_ok === true &&
     snapshot.health.action_server_ready &&
-    poseAgeMs < 10000 &&
+    poseFresh &&
     (navigationUses3D ? snapshot.pose.available : snapshot.map.loaded);
   const canSetInitialPose =
     stack?.mode === "navigation" &&
@@ -257,12 +437,69 @@ export default function App() {
     snapshot.map.loaded &&
     snapshot.navigation.state !== "navigating";
   const stackTransitioning = stackBusy || stack?.mode === "starting" || stack?.mode === "stopping";
+  const startMappingReason =
+    stackTransitioning
+      ? "栈正在启动或停止，暂时不能切换模式"
+      : stack?.mode === "mapping"
+        ? "当前已经在建图模式"
+        : "会停止当前栈并切到建图链";
+  const startNavigationReason =
+    stackTransitioning
+      ? "栈正在启动或停止，暂时不能切换模式"
+      : !selectedMapId
+        ? "请先选择一张导航地图"
+        : stack?.mode === "navigation"
+          ? "当前已经在导航模式"
+          : "会停止当前栈并加载所选地图进入导航";
+  const saveMapReason =
+    stackTransitioning
+      ? "栈正在启动或停止，暂时不能保存地图"
+      : stack?.mode !== "mapping"
+        ? "只有建图模式下才能保存当前地图"
+        : !saveMapId
+          ? "请先填写地图名"
+          : "当前建图结果可保存到地图目录";
+  const setInitialPoseReason =
+    !selectedGoal
+      ? "请先在 2D 或 3D 视图里选一个点"
+      : stack?.mode !== "navigation"
+        ? "当前不在导航模式，不能设置初始位姿"
+        : navigationUses3D
+          ? "当前 3D 导航链以 /odom 为锚定，不需要额外发送 2D 初始位姿"
+          : !snapshot.map.loaded
+            ? "2D 地图尚未加载，不能发送初始位姿"
+            : snapshot.navigation.state === "navigating"
+              ? "导航进行中，不能重设初始位姿"
+              : null;
+  const sendGoalReason =
+    !selectedGoal
+      ? "请先在 2D 或 3D 视图里选一个目标点"
+      : stack?.mode !== "navigation"
+        ? "当前不在导航模式，不能发送导航目标"
+        : snapshot.status.localization_ok !== true
+          ? `定位未就绪${localizationReason ? `: ${localizationReason}` : ""}`
+          : !snapshot.health.action_server_ready
+            ? "导航后端未就绪"
+            : !poseFresh
+              ? "机器人当前位姿超过 10 秒未刷新"
+              : navigationUses3D && !snapshot.pose.available
+                ? "当前 3D 位姿不可用"
+                : !navigationUses3D && !snapshot.map.loaded
+                  ? "2D 地图尚未加载"
+                  : null;
+
+  const effectiveViewMode = useMemo<"2d" | "3d">(() => {
+    if (viewMode === "2d" && snapshot.map.loaded) {
+      return "2d";
+    }
+    if (viewMode === "3d" && has3DViewerData) {
+      return "3d";
+    }
+    return has3DViewerData ? "3d" : "2d";
+  }, [has3DViewerData, snapshot.map.loaded, viewMode]);
 
   const refreshStack = async () => {
-    const [status, health] = await Promise.all([
-      fetchStackStatus(),
-      fetchHealth().catch(() => null),
-    ]);
+    const [status, health] = await Promise.all([fetchStackStatus(), fetchHealth().catch(() => null)]);
     setStack(status);
     setMaps(status.maps);
     if (health) {
@@ -336,7 +573,7 @@ export default function App() {
       return;
     }
     try {
-      const result = await sendInitialPose(selectedGoal);
+      const result = await sendInitialPose({ pose: selectedGoal, map_id: selectedMapId || null });
       setSelectedGoal(result.pose);
       setLastSuccess(result.message);
       setLastError(null);
@@ -352,7 +589,7 @@ export default function App() {
       return;
     }
     try {
-      const navigation = await sendNavigationGoal(selectedGoal);
+      const navigation = await sendNavigationGoal(selectedGoal, selectedMapId || null);
       setSnapshot((current) => ({ ...current, navigation }));
       setLastSuccess("导航目标已发送");
       setLastError(null);
@@ -374,29 +611,236 @@ export default function App() {
     }
   };
 
-  return (
-    <div className="app-shell">
-      <StatusSidebar
-        status={snapshot.status}
-        pose={snapshot.pose}
-        health={snapshot.health}
-        stack={stack}
-        backendConnected={backendConnected}
-        websocketConnected={websocketConnected}
-      />
+  const openDrawer = (drawer: Exclude<DrawerKey, null>) => {
+    setActiveDrawer((current) => (current === drawer ? null : drawer));
+  };
 
-      <main className="main-panel">
-        <header className="topbar">
+  const handleCreateRouteTemplate = () => {
+    const nextRouteId = routeDraftId.trim() || selectedRouteId || "office_loop";
+    setRouteDraftId(nextRouteId);
+    setRouteYaml(createRouteTemplate(nextRouteId, selectedGoal));
+  };
+
+  const handleAppendSelectedGoal = () => {
+    if (!selectedGoal) {
+      setLastError("请先在 2D 或 3D 视图中选择一个点");
+      return;
+    }
+    const nextRouteId = routeDraftId.trim() || selectedRouteId || "office_loop";
+    setRouteDraftId(nextRouteId);
+    setRouteYaml((current) => appendGoalToRouteYaml(current, nextRouteId, selectedGoal));
+    setLastSuccess("已把当前选点追加到路线 YAML");
+    setLastError(null);
+  };
+
+  const handleSaveRoute = async () => {
+    const routeId = routeDraftId.trim();
+    if (!routeId) {
+      setLastError("请先填写路线 ID");
+      return;
+    }
+    setRouteBusy(true);
+    try {
+      const detail = await saveTaskRoute(routeId, routeYaml, selectedMapId || null);
+      setSelectedRouteId(detail.route_id);
+      setRouteDraftId(detail.route_id);
+      setRouteYaml(detail.route_yaml);
+      await refreshRoutes();
+      setLastSuccess(`路线已保存: ${detail.route_id}`);
+      setLastError(null);
+    } catch (error) {
+      setLastSuccess(null);
+      setLastError(error instanceof Error ? error.message : "保存路线失败");
+    } finally {
+      setRouteBusy(false);
+    }
+  };
+
+  const handleDeleteRoute = async () => {
+    if (!selectedRouteId) {
+      setLastError("请先选择要删除的路线");
+      return;
+    }
+    if (!window.confirm(`确认删除路线 ${selectedRouteId}？`)) {
+      return;
+    }
+    setRouteBusy(true);
+    try {
+      await deleteTaskRoute(selectedRouteId);
+      setSelectedRouteId("");
+      setRouteDraftId("office_loop");
+      setRouteYaml("mission_name: office_loop\nwaypoints:\n");
+      await refreshRoutes();
+      setLastSuccess(`路线已删除: ${selectedRouteId}`);
+      setLastError(null);
+    } catch (error) {
+      setLastSuccess(null);
+      setLastError(error instanceof Error ? error.message : "删除路线失败");
+    } finally {
+      setRouteBusy(false);
+    }
+  };
+
+  const handleRunRoute = async () => {
+    if (!selectedRouteId) {
+      setLastError("请先选择路线");
+      return;
+    }
+    if (!selectedMapId) {
+      setLastError("执行路线前必须先选择地图");
+      return;
+    }
+    if (!window.confirm(`确认在地图 ${selectedMapId} 上执行路线 ${selectedRouteId}？`)) {
+      return;
+    }
+    setRouteBusy(true);
+    try {
+      const status = await runTaskRoute({
+        route_id: selectedRouteId,
+        map_id: selectedMapId,
+        mission_name: selectedRouteId,
+        dry_run: false,
+        stop_on_failure: true,
+        save_map_on_finish: false,
+        save_map_on_failure: false,
+      });
+      setRouteStatus(status);
+      await refreshRoutes();
+      setLastSuccess(`路线任务已启动: ${selectedRouteId}`);
+      setLastError(null);
+    } catch (error) {
+      setLastSuccess(null);
+      setLastError(error instanceof Error ? error.message : "执行路线失败");
+    } finally {
+      setRouteBusy(false);
+    }
+  };
+
+  const handleStopRoute = async () => {
+    setRouteBusy(true);
+    try {
+      const status = await stopTaskRoute();
+      setRouteStatus(status);
+      await refreshRoutes();
+      setLastSuccess("路线任务已停止");
+      setLastError(null);
+    } catch (error) {
+      setLastSuccess(null);
+      setLastError(error instanceof Error ? error.message : "停止路线失败");
+    } finally {
+      setRouteBusy(false);
+    }
+  };
+
+  const handleSaveObstacle = async (x: number, y: number) => {
+    if (!selectedMapId) {
+      setLastError("请先选择地图，再创建虚拟障碍物");
+      return;
+    }
+    const radius = Number(obstacleRadius);
+    if (!Number.isFinite(radius) || radius <= 0.0) {
+      setLastError("障碍物半径必须是大于 0 的数字");
+      return;
+    }
+    setObstacleBusy(true);
+    try {
+      const listing = await saveMapObstacle(selectedMapId, {
+        label: obstacleLabel.trim() || null,
+        x,
+        y,
+        radius,
+      });
+      setObstacles(listing.obstacles);
+      setLastSuccess(`已创建虚拟禁入区，共 ${listing.obstacles.length} 个`);
+      setLastError(null);
+      setObstacleLabel("");
+    } catch (error) {
+      setLastSuccess(null);
+      setLastError(error instanceof Error ? error.message : "创建虚拟障碍物失败");
+    } finally {
+      setObstacleBusy(false);
+    }
+  };
+
+  const handleAddObstacleFromGoal = () => {
+    if (!selectedGoal) {
+      setLastError("请先选点，再从目标点创建虚拟障碍物");
+      return;
+    }
+    void handleSaveObstacle(selectedGoal.x, selectedGoal.y);
+  };
+
+  const handleAddObstacleFromPose = () => {
+    if (!snapshot.pose.available || snapshot.pose.x === null || snapshot.pose.y === null) {
+      setLastError("当前没有可用机器人位姿");
+      return;
+    }
+    void handleSaveObstacle(snapshot.pose.x, snapshot.pose.y);
+  };
+
+  const handleDeleteObstacle = async (obstacleId: string) => {
+    if (!selectedMapId) {
+      return;
+    }
+    if (!window.confirm(`确认删除虚拟障碍物 ${obstacleId}？`)) {
+      return;
+    }
+    setObstacleBusy(true);
+    try {
+      const listing = await deleteMapObstacle(selectedMapId, obstacleId);
+      setObstacles(listing.obstacles);
+      setLastSuccess(`已删除虚拟障碍物: ${obstacleId}`);
+      setLastError(null);
+    } catch (error) {
+      setLastSuccess(null);
+      setLastError(error instanceof Error ? error.message : "删除虚拟障碍物失败");
+    } finally {
+      setObstacleBusy(false);
+    }
+  };
+
+  const sceneSubtitle =
+    effectiveViewMode === "3d"
+      ? "JT128 + DLIO 3D 主视图 / 双击点云选导航目标"
+      : "2D 栅格兼容视图 / 单击地图选初始位姿或目标";
+
+  const showMediaDockNow = showMediaDock;
+
+  useEffect(() => {
+    setSelectedPointcloudPath(null);
+  }, [selectedMapId]);
+
+  return (
+    <div className="legacy-console-shell">
+      <div className="legacy-console-page">
+        <header className="legacy-console-header">
           <div>
-            <h1>A2 Web Console</h1>
-            <p>建图模式 + 地图选择 + 点选导航</p>
+            <div className="legacy-console-title">A2 Web Console</div>
+            <div className="legacy-console-subtitle">{sceneSubtitle}</div>
           </div>
-          <div className="topbar-indicators">
-            <button className="mode-button" disabled={stackTransitioning || stack?.mode === "mapping"} onClick={handleStartMapping}>
-              建图模式
+          <div className="legacy-console-header-actions">
+            <button
+              type="button"
+              className={`view-switch ${viewMode === "auto" ? "view-switch-active" : ""}`}
+              onClick={() => setViewMode("auto")}
+            >
+              自动视图
             </button>
-            <button className="mode-button" disabled={stackTransitioning || !selectedMapId || stack?.mode === "navigation"} onClick={handleStartNavigation}>
-              导航模式
+            <button
+              type="button"
+              className={`view-switch ${effectiveViewMode === "2d" && viewMode === "2d" ? "view-switch-active" : ""}`}
+              onClick={() => setViewMode("2d")}
+              disabled={!snapshot.map.loaded}
+            >
+              2D 地图
+            </button>
+            <button
+              type="button"
+              className={`view-switch ${effectiveViewMode === "3d" && viewMode === "3d" ? "view-switch-active" : ""}`}
+              onClick={() => setViewMode("3d")}
+              disabled={!has3DViewerData}
+            >
+              3D 点云
             </button>
             <span className={`indicator ${snapshot.status.system_ready ? "indicator-ok" : "indicator-warn"}`}>
               ready={String(snapshot.status.system_ready)}
@@ -404,52 +848,277 @@ export default function App() {
             <span className={`indicator ${snapshot.status.localization_ok ? "indicator-ok" : "indicator-warn"}`}>
               localization={String(snapshot.status.localization_ok)}
             </span>
+            <TaskStateChip state={stack?.mode ?? "stopped"} />
           </div>
         </header>
 
-        {use3DViewer ? (
-          <PointCloudCanvas3D
-            pointcloud={snapshot.pointcloud.loaded ? snapshot.pointcloud : null}
-            selectedMap={selectedMap}
-            selectedGoal={selectedGoal}
-            activeGoal={snapshot.navigation.goal}
-            onSelectGoal={setSelectedGoal}
-          />
-        ) : (
-          <MapCanvas
-            map={snapshot.map.loaded ? snapshot.map : null}
-            pose={snapshot.pose.available ? snapshot.pose : null}
-            selectedGoal={selectedGoal}
-            activeGoal={snapshot.navigation.goal}
-            disabled={!canSendGoal}
-            onSelectGoal={setSelectedGoal}
-          />
-        )}
-        <CameraPanel camera={snapshot.camera} />
-      </main>
+        <div className="legacy-console-stage">
+          <button type="button" className="legacy-function-button" onClick={() => openDrawer("function")}>
+            功能菜单
+          </button>
 
-      <ControlSidebar
-        navigation={snapshot.navigation}
-        stack={stack}
-        maps={maps}
-        selectedMapId={selectedMapId}
-        saveMapId={saveMapId}
-        selectedGoal={selectedGoal}
-        canSendGoal={canSendGoal}
-        canSetInitialPose={canSetInitialPose}
-        stackBusy={stackTransitioning}
-        onSelectedMapChange={setSelectedMapId}
-        onSaveMapIdChange={setSaveMapId}
-        onStartMapping={handleStartMapping}
-        onStartNavigation={handleStartNavigation}
-        onStopStack={handleStopStack}
-        onSaveMap={handleSaveMap}
-        onSetInitialPose={handleSetInitialPose}
-        onSendGoal={handleSendGoal}
-        onCancelGoal={handleCancelGoal}
-        lastError={lastError}
-        lastSuccess={lastSuccess}
-      />
+          <div className="scene-rail scene-rail-left">
+            <RailButton label="任务选择" active={activeDrawer === "task"} onClick={() => openDrawer("task")} tone="blue" />
+            <RailButton label="地图选择" active={activeDrawer === "map"} onClick={() => openDrawer("map")} tone="red" />
+          </div>
+          <div className="scene-rail scene-rail-right">
+            <RailButton label="导航选择" active={activeDrawer === "nav"} onClick={() => openDrawer("nav")} tone="green" />
+            <RailButton
+              label="障碍物选择"
+              active={activeDrawer === "obstacle"}
+              onClick={() => openDrawer("obstacle")}
+              tone="green"
+            />
+          </div>
+
+          <div className="scene-hud scene-hud-left">
+            <StatusSummaryCard
+              title="机器人状态"
+              rows={[
+                ["后端", backendConnected ? "online" : "offline"],
+                ["WebSocket", websocketConnected ? "connected" : "disconnected"],
+                ["栈模式", stack?.mode ?? "stopped"],
+                ["地图", stack?.selected_map_id ?? snapshot.status.active_map ?? "暂无"],
+              ]}
+            />
+          </div>
+          <div className="scene-hud scene-hud-right">
+            <StatusSummaryCard
+              title="定位与执行"
+              rows={[
+                ["pose", snapshot.pose.available ? `${snapshot.pose.x?.toFixed(2)}, ${snapshot.pose.y?.toFixed(2)}` : "暂无"],
+                ["frame", snapshot.pose.frame_id ?? "unknown"],
+                ["3d asset", selectedPointcloudPath ?? "默认地图点云"],
+                ["goal", snapshot.navigation.goal ? `${snapshot.navigation.goal.x.toFixed(2)}, ${snapshot.navigation.goal.y.toFixed(2)}` : "暂无"],
+                ["task", snapshot.navigation.state],
+              ]}
+            />
+          </div>
+
+          <DrawerPanel side="left" open={activeDrawer === "task"}>
+            <TaskRouteManagerSection
+              routes={routes}
+              routeStatus={routeStatus}
+              selectedRouteId={selectedRouteId}
+              routeDraftId={routeDraftId}
+              routeYaml={routeYaml}
+              selectedMapId={selectedMapId}
+              routeBusy={routeBusy}
+              selectedGoal={selectedGoal}
+              onSelectedRouteChange={setSelectedRouteId}
+              onRouteDraftIdChange={setRouteDraftId}
+              onRouteYamlChange={setRouteYaml}
+              onRefreshRoutes={() => {
+                void refreshRoutes().catch((error) => {
+                  setLastError(error instanceof Error ? error.message : "刷新路线失败");
+                });
+              }}
+              onCreateRouteTemplate={handleCreateRouteTemplate}
+              onAppendSelectedGoal={handleAppendSelectedGoal}
+              onSaveRoute={handleSaveRoute}
+              onDeleteRoute={handleDeleteRoute}
+              onRunRoute={handleRunRoute}
+              onStopRoute={handleStopRoute}
+            />
+            <NavigationTaskSection navigation={snapshot.navigation} />
+            <RecentNoticeSection stack={stack} lastError={lastError} lastSuccess={lastSuccess} />
+          </DrawerPanel>
+
+          <DrawerPanel side="left" open={activeDrawer === "map"}>
+            <ModeControlSection
+              stack={stack}
+              stackBusy={stackTransitioning}
+              startMappingReason={startMappingReason}
+              onStartMapping={handleStartMapping}
+              onStopStack={handleStopStack}
+            />
+            <MapManagementSection
+              stack={stack}
+              maps={maps}
+              selectedMapId={selectedMapId}
+              saveMapId={saveMapId}
+              stackBusy={stackTransitioning}
+              startNavigationReason={startNavigationReason}
+              saveMapReason={saveMapReason}
+              onSelectedMapChange={setSelectedMapId}
+              onSaveMapIdChange={setSaveMapId}
+              onStartNavigation={handleStartNavigation}
+              onSaveMap={handleSaveMap}
+            />
+          </DrawerPanel>
+
+          <DrawerPanel side="right" open={activeDrawer === "nav"}>
+            <SelectedGoalSection
+              selectedGoal={selectedGoal}
+              canSendGoal={canSendGoal}
+              canSetInitialPose={canSetInitialPose}
+              sendGoalReason={sendGoalReason}
+              setInitialPoseReason={setInitialPoseReason}
+              onSetInitialPose={handleSetInitialPose}
+              onSendGoal={handleSendGoal}
+              onCancelGoal={handleCancelGoal}
+            />
+            <NavigationTaskSection navigation={snapshot.navigation} />
+          </DrawerPanel>
+
+          <DrawerPanel side="right" open={activeDrawer === "obstacle"}>
+            <ObstacleManagerSection
+              selectedMapId={selectedMapId}
+              obstacles={obstacles}
+              obstacleBusy={obstacleBusy}
+              obstacleLabel={obstacleLabel}
+              obstacleRadius={obstacleRadius}
+              selectedGoal={selectedGoal}
+              pose={snapshot.pose.available ? snapshot.pose : null}
+              onObstacleLabelChange={setObstacleLabel}
+              onObstacleRadiusChange={setObstacleRadius}
+              onAddObstacleFromGoal={handleAddObstacleFromGoal}
+              onAddObstacleFromPose={handleAddObstacleFromPose}
+              onDeleteObstacle={handleDeleteObstacle}
+            />
+            <NodeStatusSection stack={stack} />
+            <RuntimeInfoSection status={snapshot.status} />
+            <HealthSection health={snapshot.health} />
+          </DrawerPanel>
+
+          <FunctionMenuPanel open={activeDrawer === "function"}>
+            <section className="panel panel-compact">
+              <h2>可视化控制</h2>
+              <div className="function-button-grid">
+                <button type="button" className="secondary-button" onClick={() => setViewMode("2d")} disabled={!snapshot.map.loaded}>
+                  切到 2D 视图
+                </button>
+                <button type="button" className="secondary-button" onClick={() => setViewMode("3d")} disabled={!has3DViewerData}>
+                  切到 3D 视图
+                </button>
+                <button type="button" className="secondary-button" onClick={() => setShowMediaDock((current) => !current)}>
+                  {showMediaDockNow ? "隐藏媒体区" : "显示媒体区"}
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={!selectedPointcloudPath}
+                  onClick={() => setSelectedPointcloudPath(null)}
+                >
+                  回到默认地图点云
+                </button>
+                <button type="button" className="danger-button" onClick={handleStopStack} disabled={stackTransitioning || stack?.mode === "stopped"}>
+                  关闭建图导航节点
+                </button>
+              </div>
+            </section>
+            <ConnectionStatusSection
+              backendConnected={backendConnected}
+              websocketConnected={websocketConnected}
+              health={snapshot.health}
+            />
+            <SystemStatusSection status={snapshot.status} pose={snapshot.pose} stack={stack} />
+            <PoseSection pose={snapshot.pose} />
+          </FunctionMenuPanel>
+
+          <div className={`scene-main-grid ${showMediaDockNow ? "scene-main-grid-with-media" : ""}`}>
+            <div className="scene-main-view">
+              {effectiveViewMode === "3d" ? (
+                <Suspense fallback={<ThreeViewLoadingCard />}>
+                  <PointCloudCanvas3D
+                    pointcloud={snapshot.pointcloud.loaded ? snapshot.pointcloud : null}
+                    selectedMap={selectedMap}
+                    selectedPointcloudPath={selectedPointcloudPath}
+                    pose={snapshot.pose.available ? snapshot.pose : null}
+                    obstacles={obstacles}
+                    selectedGoal={selectedGoal}
+                    activeGoal={snapshot.navigation.goal}
+                    onSelectGoal={setSelectedGoal}
+                  />
+                </Suspense>
+              ) : (
+                <MapCanvas
+                  map={snapshot.map.loaded ? snapshot.map : null}
+                  pose={snapshot.pose.available ? snapshot.pose : null}
+                  obstacles={obstacles}
+                  selectedGoal={selectedGoal}
+                  activeGoal={snapshot.navigation.goal}
+                  disabled={!canSendGoal}
+                  onSelectGoal={setSelectedGoal}
+                />
+              )}
+            </div>
+
+            {showMediaDockNow ? (
+              <div className="scene-media-dock">
+                <MediaDock
+                  camera={snapshot.camera}
+                  selectedMap={selectedMap}
+                  selectedPointcloudPath={selectedPointcloudPath}
+                  onSelectPointcloudPath={setSelectedPointcloudPath}
+                />
+              </div>
+            ) : null}
+          </div>
+
+          <div className="scene-bottom-strip">
+            <span>{snapshot.status.lidar_status.reason ? `lidar: ${snapshot.status.lidar_status.reason}` : "lidar 状态待更新"}</span>
+            <span>{snapshot.status.localization_status.reason ? `localization: ${snapshot.status.localization_status.reason}` : "localization 状态待更新"}</span>
+            <span>{snapshot.navigation.message ?? "等待导航任务"}</span>
+            <span>{stack?.log_file ? `log: ${stack.log_file}` : "尚未生成运行日志"}</span>
+          </div>
+        </div>
+      </div>
     </div>
+  );
+}
+
+function RailButton({
+  label,
+  active,
+  onClick,
+  tone,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+  tone: "red" | "blue" | "green";
+}) {
+  return (
+    <button
+      type="button"
+      className={`scene-rail-button scene-rail-button-${tone} ${active ? "scene-rail-button-active" : ""}`}
+      onClick={onClick}
+    >
+      {label}
+    </button>
+  );
+}
+
+function ThreeViewLoadingCard() {
+  return (
+    <div className="map-shell pointcloud-shell pointcloud-loading-shell">
+      <div className="pointcloud-loading-card">
+        <div className="scene-card-title">正在加载 3D 渲染器</div>
+        <div className="scene-card-meta">Three.js / 历史点云主视图准备中...</div>
+      </div>
+    </div>
+  );
+}
+
+function DrawerPanel({ side, open, children }: { side: "left" | "right"; open: boolean; children: ReactNode }) {
+  return <div className={`legacy-drawer legacy-drawer-${side} ${open ? "legacy-drawer-open" : ""}`}>{children}</div>;
+}
+
+function FunctionMenuPanel({ open, children }: { open: boolean; children: ReactNode }) {
+  return <div className={`function-menu-panel ${open ? "function-menu-panel-open" : ""}`}>{children}</div>;
+}
+
+function StatusSummaryCard({ title, rows }: { title: string; rows: Array<[string, string]> }) {
+  return (
+    <section className="scene-summary-card">
+      <div className="scene-summary-title">{title}</div>
+      {rows.map(([label, value]) => (
+        <div key={label} className="scene-summary-row">
+          <span>{label}</span>
+          <span>{value}</span>
+        </div>
+      ))}
+    </section>
   );
 }

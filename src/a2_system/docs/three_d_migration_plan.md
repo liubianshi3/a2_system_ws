@@ -4,7 +4,7 @@
 
 This document freezes the first engineering contracts for migrating the A2 stack
 from the current 2D-first navigation/mapping path to a 3D-first path using the
-robot's front native LiDAR topic `/unitree/slam_lidar/points1`.
+robot's front lidar topic `/jt128/front/points`.
 
 It does not claim that the full 3D stack is already implemented. It defines:
 
@@ -16,7 +16,7 @@ It does not claim that the full 3D stack is already implemented. It defines:
 
 Real mapping:
 
-`/unitree/slam_lidar/points1 -> pointcloud_frame_relay -> /mid360/points -> pointcloud_to_laserscan -> /scan -> slam_toolbox -> /map`
+`/jt128/front/points -> pointcloud_to_laserscan -> /scan -> slam_toolbox -> /map`
 
 Real navigation:
 
@@ -55,7 +55,7 @@ This keeps today's runtime stable while making future 3D contracts observable.
 
 The target architecture is:
 
-`/unitree/slam_lidar/points1 -> 3D SLAM / 3D localization / 3D map store -> 3D navigation core -> Web 3D viewer`
+`/jt128/front/points -> 3D SLAM / 3D localization / 3D map store -> 3D navigation core -> Web 3D viewer`
 
 Temporary 2D compatibility artifacts are allowed only as derived products:
 
@@ -99,7 +99,7 @@ Modules that may be preserved with contract changes:
 
 ### Phase 1
 
-- Introduce a parallel 3D mapping pipeline for `/unitree/slam_lidar/points1`
+- Introduce a parallel 3D mapping pipeline for `/jt128/front/points`
 - Keep 2D map export as compatibility only
 
 ### Phase 2

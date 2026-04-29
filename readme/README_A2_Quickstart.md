@@ -109,7 +109,51 @@ pgrep -af "bringup.launch.py|a2_sdk_bridge|a2_control_bridge|manual_localization
 
 ## 3. 启动 real1
 
-如果你要直接起真实导航栈，用下面这条：
+推荐入口有两种。
+
+### 3.1 本机一键启动
+
+在开发机 `/home/dell/a2_system_ws` 下直接运行：
+
+```bash
+./scripts/start_a2_real1.sh --host a2
+```
+
+这条命令会自动：
+
+1. 同步当前工作区到 A2
+2. 远端增量构建 ROS 包和 web 前端
+3. SSH 进入 A2
+4. 关闭已知干扰进程
+5. 拉起原生前雷达链
+6. 拉起 `real1` 导航栈
+7. 拉起 web 前端
+
+如果你已经刚部署过，不想重复同步，可以：
+
+```bash
+./scripts/start_a2_real1.sh --host a2 --no-deploy
+```
+
+如果你知道初始位姿，可以直接一起发：
+
+```bash
+./scripts/start_a2_real1.sh --host a2 --initial-pose 0.0 0.0 0.0
+```
+
+### 3.2 A2 本机一键启动
+
+如果你已经登录到 A2，本机入口是：
+
+```bash
+/home/unitree/a2_system_ws/src/a2_system/tools/start_real1_suite.sh \
+  --iface eth0 \
+  --map-yaml /home/unitree/a2_system_ws/runtime/maps/test_map_20260423_1059/map.yaml
+```
+
+### 3.3 底层 bringup 入口
+
+如果你只想直接起真实导航栈，不带 web/清理流程，也可以用下面这条：
 
 ```bash
 A2_ENABLE_NAV2=true \
@@ -131,6 +175,11 @@ A2_MAP_YAML=/home/unitree/a2_system_ws/runtime/maps/<你的地图目录>/map.yam
 2. 配置真实 DDS/网络环境
 3. 后台拉起 `bringup.launch.py runtime_mode:=real`
 
+默认真实定位模式：
+
+- `amcl`
+- 只有明确排障或临时兼容时，才应手动覆盖 `A2_REAL_LOCALIZATION_MODE`
+
 启动成功后，终端通常会打印：
 
 ```text
@@ -146,7 +195,7 @@ network_interface=eth0
 ### 4.1 先看进程
 
 ```bash
-pgrep -af "bringup.launch.py|a2_sdk_bridge|a2_control_bridge|manual_localization_publisher|goal_bridge|map_server|controller_server|planner_server|bt_navigator|velocity_smoother|lifecycle_manager"
+pgrep -af "bringup.launch.py|a2_sdk_bridge|a2_control_bridge|goal_bridge|map_server|amcl|controller_server|planner_server|bt_navigator|velocity_smoother|lifecycle_manager"
 ```
 
 正常情况应该能看到：
@@ -154,14 +203,16 @@ pgrep -af "bringup.launch.py|a2_sdk_bridge|a2_control_bridge|manual_localization
 - `bringup.launch.py`
 - `a2_sdk_bridge`
 - `a2_control_bridge`
-- `manual_localization_publisher`
 - `goal_bridge`
 - `map_server`
+- `amcl`
 - `controller_server`
 - `planner_server`
 - `bt_navigator`
 - `velocity_smoother`
 - `lifecycle_manager`
+
+如果这里看到的是 `manual_localization_publisher` 而没有 `amcl`，说明当前不是默认实机复现路径，应先检查 `A2_REAL_LOCALIZATION_MODE` 是否被手动覆盖。
 
 ### 4.2 再看系统状态
 

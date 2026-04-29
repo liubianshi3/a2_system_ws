@@ -19,7 +19,7 @@ setup(
     entry_points={
         "console_scripts": [
             "goal_bridge = nav2_integration.goal_bridge:main",
-            "mock_nav_controller = nav2_integration.mock_nav_controller:main",
+            "pose_goal_controller_3d = nav2_integration.pose_goal_controller_3d:main",
         ],
     },
 )

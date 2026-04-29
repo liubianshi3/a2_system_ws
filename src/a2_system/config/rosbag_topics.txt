@@ -1,5 +1,5 @@
 /imu/data
-/mid360/points
+/jt128/front/points
 /odom
 /map
 /amcl_pose

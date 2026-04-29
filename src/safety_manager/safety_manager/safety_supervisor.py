@@ -12,11 +12,8 @@ from std_msgs.msg import Bool, String
 class SafetySupervisor(Node):
     def __init__(self):
         super().__init__("safety_supervisor")
-        self.use_mock = bool(self.declare_parameter("use_mock", True).value)
-        self.runtime_mode = self.declare_parameter(
-            "runtime_mode", "mock" if self.use_mock else "real"
-        ).value
-        lidar_topic = self.declare_parameter("lidar_topic", "/mid360/points").value
+        self.runtime_mode = self.declare_parameter("runtime_mode", "real").value
+        lidar_topic = self.declare_parameter("lidar_topic", "/jt128/front/points").value
         robot_state_topic = self.declare_parameter("robot_state_topic", "/robot_state").value
         map_topic = self.declare_parameter("map_topic", "/map").value
         localization_status_topic = self.declare_parameter("localization_status_topic", "/a2/localization_ok").value
@@ -68,7 +65,7 @@ class SafetySupervisor(Node):
 
     def on_state(self, msg):
         self.last_state = self.get_clock().now()
-        self.robot_connected = msg.connected
+        del msg
 
     def on_map(self, _msg):
         self.last_map = self.get_clock().now()

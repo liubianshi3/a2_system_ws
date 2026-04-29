@@ -97,10 +97,13 @@ class NavigationGoal(BaseModel):
 
 class NavigationGoalRequest(BaseModel):
     goal: NavigationGoal
+    map_id: str | None = None
 
 
 class InitialPoseRequest(BaseModel):
     pose: NavigationGoal
+    map_id: str | None = None
+    map_path: str | None = None
 
 
 class StartNavigationRequest(BaseModel):
@@ -109,6 +112,72 @@ class StartNavigationRequest(BaseModel):
 
 class SaveMapRequest(BaseModel):
     map_id: str
+
+
+class TaskRouteSummary(BaseModel):
+    route_id: str
+    route_path: str | None = None
+    mission_name: str | None = None
+    waypoint_count: int = 0
+    updated_at: str | None = None
+
+
+class TaskRouteDetail(TaskRouteSummary):
+    route_yaml: str = ""
+
+
+class SaveTaskRouteRequest(BaseModel):
+    route_id: str
+    route_yaml: str
+    map_id: str | None = None
+
+
+class RunTaskRouteRequest(BaseModel):
+    route_id: str
+    map_id: str | None = None
+    mission_name: str | None = None
+    dry_run: bool = False
+    stop_on_failure: bool = True
+    save_map_on_finish: bool = False
+    save_map_on_failure: bool = False
+
+
+class TaskRouteStatus(BaseModel):
+    raw: str | None = None
+    ready: bool | None = None
+    state: str | None = None
+    reason: str | None = None
+    current_mode: str | None = None
+    active_map: str | None = None
+    route_state: str | None = None
+    route_id: str | None = None
+    route_path: str | None = None
+    report_path: str | None = None
+    fields: dict[str, str] = Field(default_factory=dict)
+
+
+class VirtualObstacleZone(BaseModel):
+    obstacle_id: str
+    label: str | None = None
+    kind: str = "circle_keepout"
+    x: float
+    y: float
+    radius: float
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class VirtualObstacleUpsertRequest(BaseModel):
+    obstacle_id: str | None = None
+    label: str | None = None
+    x: float
+    y: float
+    radius: float = 0.6
+
+
+class VirtualObstacleListing(BaseModel):
+    map_id: str
+    obstacles: list[VirtualObstacleZone] = Field(default_factory=list)
 
 
 class NavigationTaskState(BaseModel):
@@ -171,9 +240,26 @@ class MapArtifactInfo(BaseModel):
     sample_stride: int | None = None
 
 
+class MapMediaEntry(BaseModel):
+    kind: str
+    path: str
+    name: str
+    group: str | None = None
+    size_bytes: int | None = None
+    artifact_kind: str | None = None
+    linked_pointcloud_path: str | None = None
+    linked_image_path: str | None = None
+    link_source: str | None = None
+
+
+class MapMediaListing(BaseModel):
+    map_id: str
+    entries: list[MapMediaEntry] = Field(default_factory=list)
+
+
 class SavedMapInfo(BaseModel):
     map_id: str
-    map_yaml: str
+    map_yaml: str | None = None
     created_at: str | None = None
     representation: str | None = None
     source_topic: str | None = None
@@ -182,6 +268,8 @@ class SavedMapInfo(BaseModel):
     width: int | None = None
     height: int | None = None
     resolution: float | None = None
+    navigation_compatible: bool = True
+    navigation_compatibility_reason: str | None = None
     artifacts: list[MapArtifactInfo] = Field(default_factory=list)
 
 

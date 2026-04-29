@@ -16,17 +16,15 @@ def _load_yaml(path):
         return yaml.safe_load(handle) or {}
 
 
-def _real_lidar_consumer_topic(a2_system_share, runtime_mode):
-    if runtime_mode != "real":
-        return "/mid360/points"
+def _real_lidar_consumer_topic(a2_system_share):
     params = _load_yaml(f"{a2_system_share}/config/real_lidar.yaml").get("real_lidar", {}).get(
         "ros__parameters", {}
     )
     profile = params.get("profile", "")
     driver_mode = params.get("driver_mode", "")
     if profile == "unitree_native_fused" or driver_mode == "external_pointcloud":
-        return params.get("input_topic", "/unitree/slam_lidar/points1")
-    return params.get("output_topic", "/mid360/points")
+        return params.get("input_topic", "/jt128/front/points")
+    return params.get("output_topic", "/jt128/front/points")
 
 
 def _unitree_ddsc_env(runtime_mode):
@@ -48,10 +46,7 @@ def _unitree_ddsc_env(runtime_mode):
 
 def _launch_setup(context, *args, **kwargs):
     del args, kwargs
-    use_mock_value = LaunchConfiguration("use_mock").perform(context)
-    runtime_mode = normalize_runtime_mode(
-        LaunchConfiguration("runtime_mode").perform(context), use_mock_value
-    )
+    runtime_mode = normalize_runtime_mode(LaunchConfiguration("runtime_mode").perform(context))
     auto_start_explore = LaunchConfiguration("auto_start_explore").perform(context)
     network_interface = LaunchConfiguration("network_interface").perform(context)
     enable_nav2_bringup = LaunchConfiguration("enable_nav2_bringup").perform(context)
@@ -59,58 +54,31 @@ def _launch_setup(context, *args, **kwargs):
     enable_control_bridge = LaunchConfiguration("enable_control_bridge").perform(context)
     real_localization_mode = LaunchConfiguration("real_localization_mode").perform(context)
     map_yaml = LaunchConfiguration("map").perform(context)
-    gazebo_world = LaunchConfiguration("gazebo_world").perform(context)
-    gazebo_gui = LaunchConfiguration("gazebo_gui").perform(context)
-    gazebo_paused = LaunchConfiguration("gazebo_paused").perform(context)
     use_sim_time = use_sim_time_for_mode(runtime_mode)
     use_sim_time_text = str(use_sim_time).lower()
-    use_mock = runtime_mode == "mock"
-    use_mock_text = str(use_mock).lower()
     a2_system_share = get_package_share_directory("a2_system")
     bringup_share = get_package_share_directory("a2_bringup")
     unitree_ddsc_env = _unitree_ddsc_env(runtime_mode)
-    real_lidar_topic = _real_lidar_consumer_topic(a2_system_share, runtime_mode)
+    real_lidar_topic = _real_lidar_consumer_topic(a2_system_share)
     slam_params = _load_yaml(f"{a2_system_share}/config/slam.yaml").get("slam_manager", {}).get(
         "ros__parameters", {}
     )
     map_representation = str(slam_params.get("primary_map_representation", "occupancy_grid_2d"))
     require_map_for_safety = map_representation != "pointcloud_map_3d"
 
-    actions = []
-    if runtime_mode == "gazebo":
-        actions.append(
-            Node(
-                package="gazebo_bridge",
-                executable="gazebo_state_adapter",
-                name="gazebo_state_adapter",
-                parameters=[{
-                    "runtime_mode": runtime_mode,
-                    "use_sim_time": True,
-                    "odom_topic": "/gazebo/odom",
-                    "imu_topic": "/gazebo/imu",
-                    "state_topic": "/a2/raw_state",
-                    "sdk_connected_topic": "/a2/sdk/connected",
-                    "sdk_status_topic": "/a2/sdk/status",
-                }],
-            )
-        )
-    else:
-        actions.append(
-            Node(
-                package="a2_sdk_bridge",
-                executable="a2_sdk_bridge_node",
-                name="a2_sdk_bridge",
-                additional_env=unitree_ddsc_env,
-                parameters=[f"{a2_system_share}/config/a2_sdk.yaml", {
-                    "use_mock": use_mock,
-                    "allow_loopback": use_mock,
-                    "network_interface": network_interface,
-                    "use_sim_time": use_sim_time,
-                }],
-            )
-        )
-
-    actions.extend([
+    actions = [
+        Node(
+            package="a2_sdk_bridge",
+            executable="a2_sdk_bridge_node",
+            name="a2_sdk_bridge",
+            additional_env=unitree_ddsc_env,
+            parameters=[f"{a2_system_share}/config/a2_sdk.yaml", {
+                "use_mock": False,
+                "allow_loopback": False,
+                "network_interface": network_interface,
+                "use_sim_time": use_sim_time,
+            }],
+        ),
         Node(
             package="a2_state_publisher",
             executable="a2_state_publisher_node",
@@ -122,7 +90,6 @@ def _launch_setup(context, *args, **kwargs):
             executable="task_manager.py",
             name="task_manager",
             parameters=[f"{a2_system_share}/config/task_manager.yaml", {
-                "use_mock": use_mock,
                 "runtime_mode": runtime_mode,
                 "use_sim_time": use_sim_time,
             }],
@@ -134,11 +101,11 @@ def _launch_setup(context, *args, **kwargs):
             condition=IfCondition(enable_control_bridge),
             additional_env=unitree_ddsc_env,
             parameters=[f"{a2_system_share}/config/motion_limits.yaml", {
-                "use_mock": use_mock,
-                "allow_loopback": use_mock,
+                "use_mock": False,
+                "allow_loopback": False,
                 "network_interface": network_interface,
                 "runtime_mode": runtime_mode,
-                "sim_cmd_topic": "/gazebo/cmd_vel" if runtime_mode == "gazebo" else "",
+                "sim_cmd_topic": "",
                 "use_sim_time": use_sim_time,
             }],
         ),
@@ -148,7 +115,6 @@ def _launch_setup(context, *args, **kwargs):
             name="safety_supervisor",
             parameters=[f"{a2_system_share}/config/safety.yaml", {
                 "lidar_topic": real_lidar_topic,
-                "use_mock": use_mock,
                 "runtime_mode": runtime_mode,
                 "latch_map_ready": enable_nav2_bringup_bool,
                 "map_transient_local": enable_nav2_bringup_bool,
@@ -162,7 +128,6 @@ def _launch_setup(context, *args, **kwargs):
             executable="real_readiness_monitor",
             name="real_readiness_monitor",
             parameters=[{
-                "use_mock": use_mock,
                 "runtime_mode": runtime_mode,
                 "use_sim_time": use_sim_time,
             }],
@@ -171,19 +136,14 @@ def _launch_setup(context, *args, **kwargs):
             PythonLaunchDescriptionSource(f"{bringup_share}/launch/sensors.launch.py"),
             launch_arguments={
                 "runtime_mode": runtime_mode,
-                "use_mock": use_mock_text,
                 "use_sim_time": use_sim_time_text,
                 "network_interface": network_interface,
-                "gazebo_world": gazebo_world,
-                "gazebo_gui": gazebo_gui,
-                "gazebo_paused": gazebo_paused,
             }.items(),
         ),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(f"{bringup_share}/launch/slam.launch.py"),
             launch_arguments={
                 "runtime_mode": runtime_mode,
-                "use_mock": use_mock_text,
                 "use_sim_time": use_sim_time_text,
                 "enable_nav2_bringup": enable_nav2_bringup,
                 "map": map_yaml,
@@ -193,7 +153,6 @@ def _launch_setup(context, *args, **kwargs):
             PythonLaunchDescriptionSource(f"{bringup_share}/launch/mapping.launch.py"),
             launch_arguments={
                 "runtime_mode": runtime_mode,
-                "use_mock": use_mock_text,
                 "use_sim_time": use_sim_time_text,
                 "enable_nav2_bringup": enable_nav2_bringup,
                 "pointcloud_topic": real_lidar_topic,
@@ -203,7 +162,6 @@ def _launch_setup(context, *args, **kwargs):
             PythonLaunchDescriptionSource(f"{bringup_share}/launch/localization.launch.py"),
             launch_arguments={
                 "runtime_mode": runtime_mode,
-                "use_mock": use_mock_text,
                 "use_sim_time": use_sim_time_text,
                 "enable_nav2_bringup": enable_nav2_bringup,
                 "real_localization_mode": real_localization_mode,
@@ -213,12 +171,10 @@ def _launch_setup(context, *args, **kwargs):
             PythonLaunchDescriptionSource(f"{bringup_share}/launch/nav2.launch.py"),
             launch_arguments={
                 "runtime_mode": runtime_mode,
-                "use_mock": use_mock_text,
                 "use_sim_time": use_sim_time_text,
                 "enable_nav2_bringup": enable_nav2_bringup,
                 "real_localization_mode": real_localization_mode,
                 "map": map_yaml,
-                "gazebo_world": gazebo_world,
             }.items(),
         ),
         IncludeLaunchDescription(
@@ -228,22 +184,18 @@ def _launch_setup(context, *args, **kwargs):
                 "use_sim_time": use_sim_time_text,
             }.items(),
         ),
-    ])
+    ]
     return actions
 
 
 def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument("runtime_mode", default_value=""),
-        DeclareLaunchArgument("use_mock", default_value="true"),
         DeclareLaunchArgument("auto_start_explore", default_value="false"),
         DeclareLaunchArgument("network_interface", default_value=""),
         DeclareLaunchArgument("enable_nav2_bringup", default_value="false"),
         DeclareLaunchArgument("enable_control_bridge", default_value="false"),
         DeclareLaunchArgument("real_localization_mode", default_value="amcl"),
         DeclareLaunchArgument("map", default_value=""),
-        DeclareLaunchArgument("gazebo_world", default_value=""),
-        DeclareLaunchArgument("gazebo_gui", default_value="false"),
-        DeclareLaunchArgument("gazebo_paused", default_value="false"),
         OpaqueFunction(function=_launch_setup),
     ])

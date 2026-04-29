@@ -8,10 +8,14 @@ server:
 
 ros:
   map_topic: /map
-  pointcloud_topic: /unitree/slam_lidar/points1
-  localization_pose_topic: /odom
+  pointcloud_topic: /jt128/dlio/map_points
+  pointcloud_fallback_topic: /jt128/front/points
+  pointcloud_primary_stale_sec: 2.0
+  pointcloud_preview_max_points: 20000
+  task_manager_service: /a2/task_manager/command
+  localization_pose_topic: /jt128/dlio/odom
   localization_pose_msg_type: nav_msgs/msg/Odometry
-  odom_topic: /odom
+  odom_topic: /jt128/dlio/odom
   tf_topic: /tf
   tf_static_topic: /tf_static
   real_report_topic: /a2/real/report
@@ -65,8 +69,8 @@ native_slam:
 
 stack:
   workspace: /opt/a2_system_ws
-  network_interface: eth0
+  network_interface: net1
   map_root: /opt/a2_system_ws/runtime/maps
-  start_script: /opt/a2_system_ws/install/a2_system/share/a2_system/start_real_stack.sh
-  stop_script: /opt/a2_system_ws/install/a2_system/share/a2_system/stop_stack.sh
+  start_script: /opt/a2_system_ws/src/a2_system/tools/start_jt128_3d_stack.sh
+  stop_script: /opt/a2_system_ws/src/a2_system/tools/stop_jt128_stack.sh
   command_timeout_sec: 15.0

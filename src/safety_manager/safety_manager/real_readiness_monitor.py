@@ -8,10 +8,7 @@ from std_msgs.msg import Bool, String
 class RealReadinessMonitor(Node):
     def __init__(self):
         super().__init__("real_readiness_monitor")
-        self.use_mock = bool(self.declare_parameter("use_mock", True).value)
-        self.runtime_mode = self.declare_parameter(
-            "runtime_mode", "mock" if self.use_mock else "real"
-        ).value
+        self.runtime_mode = self.declare_parameter("runtime_mode", "real").value
         self.lidar_connected_topic = self.declare_parameter(
             "lidar_connected_topic", "/a2/lidar/connected"
         ).value
@@ -58,29 +55,21 @@ class RealReadinessMonitor(Node):
         return fields
 
     def tick(self):
-        if self.runtime_mode == "mock":
-            self.sdk_connected = True
-            self.lidar_connected = True
-            self.localization_ok = True
-            self.map_ready = True
-            ready = True
-            report = self.build_report(True, "ready", "mock_mode")
-        else:
-            ready = self.sdk_connected and self.lidar_connected and self.map_ready and self.localization_ok
-            reason = []
-            if not self.sdk_connected:
-                reason.append("sdk_down")
-            if not self.lidar_connected:
-                reason.append(f"{self.lidar_label}_down")
-            if not self.map_ready:
-                reason.append("map_down")
-            if not self.localization_ok:
-                reason.append("localization_down")
-            report = self.build_report(
-                ready,
-                "ready" if ready else "degraded",
-                ",".join(reason) if reason else "ok",
-            )
+        ready = self.sdk_connected and self.lidar_connected and self.map_ready and self.localization_ok
+        reason = []
+        if not self.sdk_connected:
+            reason.append("sdk_down")
+        if not self.lidar_connected:
+            reason.append(f"{self.lidar_label}_down")
+        if not self.map_ready:
+            reason.append("map_down")
+        if not self.localization_ok:
+            reason.append("localization_down")
+        report = self.build_report(
+            ready,
+            "ready" if ready else "degraded",
+            ",".join(reason) if reason else "ok",
+        )
         self.ready_pub.publish(Bool(data=ready))
         self.report_pub.publish(String(data=report))
         if report != self.last_report:

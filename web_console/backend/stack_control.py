@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import math
 import re
+import shutil
 import shlex
 import signal
 import subprocess
@@ -14,7 +16,18 @@ from typing import Any
 import yaml
 
 from .config import AppConfig
-from .models import MapArtifactInfo, MapSnapshot, NodeCheck, SavedMapInfo, StackStatus
+from .models import (
+    MapArtifactInfo,
+    MapMediaEntry,
+    MapMediaListing,
+    MapSnapshot,
+    NodeCheck,
+    SavedMapInfo,
+    StackStatus,
+    VirtualObstacleListing,
+    VirtualObstacleUpsertRequest,
+    VirtualObstacleZone,
+)
 
 
 class StackControlError(RuntimeError):
@@ -22,6 +35,7 @@ class StackControlError(RuntimeError):
 
 
 MAP_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+OBSTACLE_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 POLL_INTERVAL_SEC = 0.5
 START_STABILITY_POLLS = 3
 LOG_TAIL_LINE_LIMIT = 80
@@ -42,10 +56,9 @@ LOG_HIGHLIGHT_MARKERS = (
 PatternSpec = str | tuple[str, ...]
 
 MAPPING_NODES: list[tuple[str, str, PatternSpec]] = [
-    ("bringup", "bringup.launch.py", "bringup.launch.py"),
-    ("sdk", "a2_sdk_bridge", "a2_sdk_bridge_node"),
-    ("control", "a2_control_bridge", "a2_control_bridge_node"),
-    ("map_source", "map source", ("slam_toolbox", "native_map_relay", "occupancy_mapper")),
+    ("driver", "JT128 Hesai driver", ("jt128_hesai_driver", "hesai_ros_driver_node")),
+    ("dlio_odom", "JT128 DLIO odom", ("jt128_dlio_odom", "dlio_odom_node")),
+    ("dlio_map", "JT128 DLIO map", ("jt128_dlio_map", "dlio_map_node")),
     ("map_manager", "map_manager", "map_manager_node"),
 ]
 
@@ -64,16 +77,23 @@ NAVIGATION_NODES: list[tuple[str, str, PatternSpec]] = [
 ]
 
 NAVIGATION_NODES_3D: list[tuple[str, str, PatternSpec]] = [
-    ("bringup", "bringup.launch.py", "bringup.launch.py"),
+    ("navigation_launch", "JT128 3D navigation launch", "jt128_3d_navigation.launch.py"),
+    ("dlio_odom", "JT128 DLIO odom", ("jt128_dlio_odom", "dlio_odom_node")),
+    ("dlio_map", "JT128 DLIO map", ("jt128_dlio_map", "dlio_map_node")),
     ("sdk", "a2_sdk_bridge", "a2_sdk_bridge_node"),
     ("control", "a2_control_bridge", "a2_control_bridge_node"),
+    ("map_loader", "3D pointcloud map loader", "pointcloud_map_loader"),
+    ("relocalizer", "3D PCD relocalizer", "pcd_relocalizer_3d"),
     ("localization", "3D localization gate", "localization_gate"),
     ("goal_bridge", "3D goal bridge", "goal_bridge"),
+    ("goal_controller", "3D pose goal controller", "pose_goal_controller_3d"),
     ("map_manager", "3D map manager", "map_manager_node"),
 ]
 
 STACK_CLEANUP_PATTERNS = [
     "bringup.launch.py",
+    "jt128_3d_navigation.launch.py",
+    "dlio_mapping.launch.py",
     "a2_state_publisher_node",
     "a2_sdk_bridge_node",
     "a2_control_bridge_node",
@@ -82,17 +102,27 @@ STACK_CLEANUP_PATTERNS = [
     "real_readiness_monitor",
     "static_tf_manager",
     "sync_monitor",
+    "pointcloud_guard",
+    "pointcloud_map_loader",
     "mid360_driver_guard",
-    "pointcloud_frame_relay",
+    "pointcloud_relay",
+    "pointcloud_accumulator",
+    "jt128_hesai_driver",
+    "jt128_dlio_odom",
+    "jt128_dlio_map",
+    "dlio_odom_node",
+    "dlio_map_node",
     "pointcloud_to_laserscan",
     "slam_toolbox",
     "native_map_relay",
     "slam_orchestrator",
+    "pcd_relocalizer_3d",
     "localization_gate",
     "exploration_manager",
     "manual_localization_publisher",
     "amcl",
     "goal_bridge",
+    "pose_goal_controller_3d",
     "occupancy_mapper",
     "map_manager_node",
     "map_server",
@@ -105,6 +135,12 @@ STACK_CLEANUP_PATTERNS = [
     "velocity_smoother",
     "lifecycle_manager",
 ]
+
+IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif")
+POINTCLOUD_SUFFIXES = (".pcd", ".ply", ".xyz", ".xyzn", ".pts")
+TEXT_SUFFIXES = (".txt", ".log", ".json", ".yaml", ".yml", ".csv")
+
+ExplicitMediaIndex = dict[str, dict[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -174,6 +210,41 @@ class StackController:
         except Exception:
             return {}
 
+    def _start_script_command(self, mode: str, map_id: str | None = None) -> list[str]:
+        if self.start_script.name == "start_jt128_3d_stack.sh":
+            command = [
+                str(self.start_script),
+                "--mode",
+                mode,
+                "--lidar-iface",
+                self.config.stack.network_interface,
+                "--no-web",
+            ]
+            if mode == "navigation":
+                if not map_id:
+                    raise StackControlError("3D 导航模式缺少地图 ID")
+                command.extend(["--map-id", map_id, "--enable-motion"])
+            return command
+        if self.start_script.name == "start_jt128_dlio_mapping.sh":
+            if mode != "mapping":
+                fallback = self.start_script.with_name("start_jt128_3d_stack.sh")
+                if fallback.exists():
+                    command = [
+                        str(fallback),
+                        "--mode",
+                        "navigation",
+                        "--map-id",
+                        map_id or "",
+                        "--lidar-iface",
+                        self.config.stack.network_interface,
+                        "--enable-motion",
+                        "--no-web",
+                    ]
+                    return command
+                raise StackControlError("当前启动脚本只支持建图，不能启动 3D 导航")
+            return [str(self.start_script), "--iface", self.config.stack.network_interface, "--no-web"]
+        return [str(self.start_script), self.config.stack.network_interface, "enable_control_bridge:=true"]
+
     def stop(self) -> dict[str, str]:
         previous = self._read_runtime_state()
         last_mode = previous.get("target_mode") or previous.get("mode")
@@ -215,7 +286,7 @@ class StackController:
 
         try:
             result = self._run(
-                [str(self.start_script), self.config.stack.network_interface, "enable_control_bridge:=true"],
+                self._start_script_command("mapping"),
                 env={"A2_ENABLE_NAV2": "false", "A2_MAP_YAML": ""},
             )
             self._wait_for_expected_nodes("mapping")
@@ -243,9 +314,13 @@ class StackController:
         if not self.start_script.exists():
             raise StackControlError(f"启动脚本不存在: {self.start_script}")
 
-        map_info = self.get_map(map_id)
+        map_info = self.get_map(map_id, include_incompatible=True)
         if map_info is None:
             raise StackControlError(f"地图不存在: {map_id}")
+        if not map_info.navigation_compatible:
+            raise StackControlError(
+                map_info.navigation_compatibility_reason or f"地图不兼容当前导航链: {map_id}"
+            )
 
         self.stop_if_running()
         self._write_runtime_state(
@@ -259,14 +334,14 @@ class StackController:
         use_3d_navigation = self._is_3d_navigation_map(map_info)
         try:
             result = self._run(
-                [str(self.start_script), self.config.stack.network_interface, "enable_control_bridge:=true"],
+                self._start_script_command("navigation" if use_3d_navigation else "mapping", map_info.map_id),
                 env={
                     "A2_ENABLE_NAV2": "false" if use_3d_navigation else "true",
                     "A2_REAL_LOCALIZATION_MODE": "uslam_odom" if use_3d_navigation else "amcl",
-                    "A2_MAP_YAML": map_info.map_yaml,
+                    "A2_MAP_YAML": map_info.map_yaml or "",
                 },
             )
-            self._wait_for_expected_nodes("navigation")
+            self._wait_for_expected_nodes("navigation", use_3d_navigation=use_3d_navigation)
             if not use_3d_navigation:
                 self._ensure_navigation_lifecycle_ready()
         except Exception as exc:
@@ -306,26 +381,43 @@ class StackController:
 
     def _is_3d_navigation_map(self, map_info: SavedMapInfo | None = None) -> bool:
         if self.navigation_representation() == "pointcloud_map_3d":
-            return True
+            return bool(map_info and map_info.navigation_compatible)
         if map_info is None:
             return False
         return bool(map_info.has_pointcloud_3d or map_info.representation == "pointcloud_map_3d")
 
-    def _expected_nodes_for_mode(self, mode: str) -> list[tuple[str, str, PatternSpec]]:
+    def _navigation_compatibility_for_map(self, map_info: SavedMapInfo) -> tuple[bool, str | None]:
+        if self.navigation_representation() != "pointcloud_map_3d":
+            return True, None
+        if map_info.has_pointcloud_3d or map_info.representation == "pointcloud_map_3d":
+            return True, None
+        return (
+            False,
+            "当前导航链要求 3D 点云地图；该地图缺少 pointcloud_map_3d 资产，仅保留旧 2D 兼容资产",
+        )
+
+    def _expected_nodes_for_mode(
+        self,
+        mode: str,
+        *,
+        use_3d_navigation: bool | None = None,
+    ) -> list[tuple[str, str, PatternSpec]]:
         if mode == "navigation":
-            if self._is_3d_navigation_map():
+            if use_3d_navigation is None:
+                runtime_state = self._read_runtime_state()
+                selected_map_id = runtime_state.get("selected_map_id")
+                map_info = self.get_map(str(selected_map_id), include_incompatible=True) if selected_map_id else None
+                if map_info is not None:
+                    use_3d_navigation = self._is_3d_navigation_map(map_info)
+                else:
+                    use_3d_navigation = self.navigation_representation() == "pointcloud_map_3d"
+            if use_3d_navigation:
                 return NAVIGATION_NODES_3D
             return NAVIGATION_NODES
-        if self.mapping_source_profile() == "front_lidar_pointcloud_3d":
-            return [
-                item
-                for item in MAPPING_NODES
-                if item[0] != "map_source"
-            ]
         return MAPPING_NODES
 
-    def _wait_for_expected_nodes(self, mode: str) -> None:
-        expected = self._expected_nodes_for_mode(mode)
+    def _wait_for_expected_nodes(self, mode: str, *, use_3d_navigation: bool | None = None) -> None:
+        expected = self._expected_nodes_for_mode(mode, use_3d_navigation=use_3d_navigation)
         deadline = time.monotonic() + self.start_timeout
         missing_labels: list[str] = []
         stable_polls = 0
@@ -434,7 +526,13 @@ class StackController:
         recorded_pid = self._read_pid()
         if recorded_pid:
             roots.add(recorded_pid)
-        roots.update(proc.pid for proc in records if "bringup.launch.py" in proc.args)
+        roots.update(
+            proc.pid
+            for proc in records
+            if "bringup.launch.py" in proc.args
+            or "jt128_3d_navigation.launch.py" in proc.args
+            or "dlio_mapping.launch.py" in proc.args
+        )
 
         target_pids: set[int] = set()
         for root in roots:
@@ -472,7 +570,7 @@ class StackController:
             if any(pattern in proc.args for pattern in STACK_CLEANUP_PATTERNS)
         ]
 
-    def list_maps(self) -> list[SavedMapInfo]:
+    def list_maps(self, *, include_incompatible: bool = False) -> list[SavedMapInfo]:
         if not self.map_root.exists():
             return []
         maps: list[SavedMapInfo] = []
@@ -480,38 +578,246 @@ class StackController:
             if not item.is_dir():
                 continue
             map_yaml = item / "map.yaml"
-            if not map_yaml.exists():
-                continue
             metadata = self._read_yaml(item / "metadata.yaml")
+            if not map_yaml.exists() and not metadata:
+                continue
             artifact_models = [
                 MapArtifactInfo(**artifact)
                 for artifact in (metadata.get("artifacts") or [])
                 if isinstance(artifact, dict) and artifact.get("kind") and artifact.get("path")
             ]
-            maps.append(
-                SavedMapInfo(
-                    map_id=item.name,
-                    map_yaml=str(map_yaml),
-                    created_at=metadata.get("created_at"),
-                    representation=metadata.get("representation"),
-                    source_topic=metadata.get("source_topic"),
-                    pointcloud_topic_3d=metadata.get("pointcloud_topic_3d"),
-                    has_pointcloud_3d=any(
-                        artifact.kind == "pointcloud_snapshot_3d" for artifact in artifact_models
-                    ),
-                    width=metadata.get("width"),
-                    height=metadata.get("height"),
-                    resolution=metadata.get("resolution"),
-                    artifacts=artifact_models,
-                )
+            map_info = SavedMapInfo(
+                map_id=item.name,
+                map_yaml=str(map_yaml) if map_yaml.exists() else None,
+                created_at=metadata.get("created_at"),
+                representation=metadata.get("representation"),
+                source_topic=metadata.get("source_topic"),
+                pointcloud_topic_3d=metadata.get("pointcloud_topic_3d"),
+                has_pointcloud_3d=any(
+                    artifact.kind in {"pointcloud_snapshot_3d", "native_pointcloud_map_3d"}
+                    for artifact in artifact_models
+                ),
+                width=metadata.get("width"),
+                height=metadata.get("height"),
+                resolution=metadata.get("resolution"),
+                artifacts=artifact_models,
             )
+            compatible, reason = self._navigation_compatibility_for_map(map_info)
+            map_info.navigation_compatible = compatible
+            map_info.navigation_compatibility_reason = reason
+            if include_incompatible or compatible:
+                maps.append(map_info)
         return maps
 
-    def get_map(self, map_id: str) -> SavedMapInfo | None:
-        for item in self.list_maps():
+    def get_map(self, map_id: str, *, include_incompatible: bool = True) -> SavedMapInfo | None:
+        for item in self.list_maps(include_incompatible=include_incompatible):
             if item.map_id == map_id:
                 return item
         return None
+
+    def list_map_media(self, map_id: str) -> MapMediaListing:
+        map_info = self.get_map(map_id)
+        if map_info is None:
+            raise StackControlError(f"地图不存在: {map_id}")
+
+        map_dir = self._resolve_map_dir(map_id)
+        artifact_by_path = {artifact.path: artifact for artifact in map_info.artifacts}
+        explicit_index = self._read_map_media_index(map_dir)
+        candidate_paths = {
+            path.relative_to(map_dir).as_posix()
+            for path in map_dir.rglob("*")
+            if path.is_file()
+        }
+        entries: list[MapMediaEntry] = []
+
+        for relative_path in sorted(candidate_paths):
+            file_path = map_dir / Path(relative_path)
+            artifact = artifact_by_path.get(relative_path)
+            explicit = explicit_index.get(relative_path, {})
+            kind = str(explicit.get("kind") or self._classify_media_kind(file_path, artifact.kind if artifact else None))
+            explicit_linked_pointcloud = self._normalize_media_link(explicit.get("linked_pointcloud_path"), candidate_paths)
+            explicit_linked_image = self._normalize_media_link(explicit.get("linked_image_path"), candidate_paths)
+            inferred_linked_pointcloud = (
+                self._find_linked_pointcloud_path(relative_path, candidate_paths) if kind == "image" else None
+            )
+            inferred_linked_image = (
+                self._find_linked_image_path(relative_path, candidate_paths) if kind == "pointcloud" else None
+            )
+            linked_pointcloud = explicit_linked_pointcloud or inferred_linked_pointcloud
+            linked_image = explicit_linked_image or inferred_linked_image
+            link_source = None
+            if explicit_linked_pointcloud or explicit_linked_image:
+                link_source = "metadata"
+            elif linked_pointcloud or linked_image:
+                link_source = "inferred"
+            entries.append(
+                MapMediaEntry(
+                    kind=kind,
+                    path=relative_path,
+                    name=str(explicit.get("name") or file_path.name),
+                    group=str(explicit.get("group") or (file_path.parent.relative_to(map_dir).as_posix() if file_path.parent != map_dir else "root")),
+                    size_bytes=file_path.stat().st_size if file_path.exists() else None,
+                    artifact_kind=artifact.kind if artifact else None,
+                    linked_pointcloud_path=linked_pointcloud,
+                    linked_image_path=linked_image,
+                    link_source=link_source,
+                )
+            )
+
+        return MapMediaListing(map_id=map_id, entries=entries)
+
+    def list_virtual_obstacles(self, map_id: str) -> VirtualObstacleListing:
+        map_dir = self._resolve_map_dir(map_id)
+        return VirtualObstacleListing(
+            map_id=map_id,
+            obstacles=self._load_virtual_obstacles(map_dir),
+        )
+
+    def save_virtual_obstacle(
+        self,
+        map_id: str,
+        request: VirtualObstacleUpsertRequest,
+    ) -> VirtualObstacleListing:
+        map_dir = self._resolve_map_dir(map_id)
+        obstacle_id = self._normalize_obstacle_id(request.obstacle_id)
+        radius = float(request.radius)
+        x = float(request.x)
+        y = float(request.y)
+        if not all(math.isfinite(value) for value in (x, y, radius)):
+            raise StackControlError("障碍物坐标或半径包含非有限数值")
+        if radius <= 0.0:
+            raise StackControlError("障碍物半径必须大于 0")
+
+        now = datetime.now().isoformat()
+        zones = self._load_virtual_obstacles(map_dir)
+        existing = next((zone for zone in zones if zone.obstacle_id == obstacle_id), None)
+        created_at = existing.created_at if existing is not None else now
+        replacement = VirtualObstacleZone(
+            obstacle_id=obstacle_id,
+            label=(request.label or "").strip() or obstacle_id,
+            kind="circle_keepout",
+            x=x,
+            y=y,
+            radius=radius,
+            created_at=created_at,
+            updated_at=now,
+        )
+        updated = [zone for zone in zones if zone.obstacle_id != obstacle_id]
+        updated.append(replacement)
+        updated.sort(key=lambda zone: zone.obstacle_id)
+        self._write_virtual_obstacles(map_dir, updated)
+        return VirtualObstacleListing(map_id=map_id, obstacles=updated)
+
+    def delete_virtual_obstacle(self, map_id: str, obstacle_id: str) -> VirtualObstacleListing:
+        map_dir = self._resolve_map_dir(map_id)
+        normalized_id = self._normalize_obstacle_id(obstacle_id)
+        zones = self._load_virtual_obstacles(map_dir)
+        updated = [zone for zone in zones if zone.obstacle_id != normalized_id]
+        if len(updated) == len(zones):
+            raise StackControlError(f"虚拟障碍物不存在: {normalized_id}")
+        self._write_virtual_obstacles(map_dir, updated)
+        return VirtualObstacleListing(map_id=map_id, obstacles=updated)
+
+    def find_virtual_obstacle_hit(
+        self,
+        map_id: str,
+        *,
+        x: float,
+        y: float,
+        padding: float = 0.0,
+    ) -> VirtualObstacleZone | None:
+        if not map_id:
+            return None
+        obstacles = self.list_virtual_obstacles(map_id).obstacles
+        clearance = max(0.0, float(padding))
+        for obstacle in obstacles:
+            limit = obstacle.radius + clearance
+            if math.hypot(float(x) - obstacle.x, float(y) - obstacle.y) <= limit:
+                return obstacle
+        return None
+
+    def validate_point_outside_virtual_obstacles(
+        self,
+        map_id: str,
+        *,
+        x: float,
+        y: float,
+        subject: str,
+        padding: float = 0.0,
+    ) -> None:
+        obstacle = self.find_virtual_obstacle_hit(map_id, x=x, y=y, padding=padding)
+        if obstacle is None:
+            return
+        label = obstacle.label or obstacle.obstacle_id
+        raise StackControlError(
+            f"{subject}落在虚拟障碍物内: {label} (中心 {obstacle.x:.2f}, {obstacle.y:.2f}, 半径 {obstacle.radius:.2f} m)"
+        )
+
+    def resolve_map_file(self, map_id: str, relative_path: str) -> Path:
+        map_dir = self._resolve_map_dir(map_id)
+        candidate = (map_dir / relative_path).resolve()
+        if map_dir != candidate and map_dir not in candidate.parents:
+            raise StackControlError("非法地图文件路径")
+        if not candidate.exists() or not candidate.is_file():
+            raise StackControlError(f"地图文件不存在: {relative_path}")
+        return candidate
+
+    def attach_native_pointcloud_artifact(
+        self,
+        map_id: str,
+        native_pcd_path: str,
+        *,
+        pointcloud_topic_3d: str | None = None,
+    ) -> SavedMapInfo:
+        map_id = map_id.strip()
+        if not map_id:
+            raise StackControlError("地图名不能为空")
+        if not MAP_ID_RE.match(map_id):
+            raise StackControlError("地图名只能包含字母、数字、下划线、点和短横线")
+
+        source_path = Path(native_pcd_path).expanduser().resolve()
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            if source_path.exists() and source_path.is_file() and source_path.stat().st_size > 0:
+                break
+            time.sleep(0.25)
+        if not source_path.exists() or not source_path.is_file() or source_path.stat().st_size <= 0:
+            raise StackControlError(f"原生 3D 地图文件不存在或为空: {source_path}")
+
+        map_dir = self.map_root / map_id
+        map_dir.mkdir(parents=True, exist_ok=True)
+        target_path = map_dir / "native_map.pcd"
+        shutil.copy2(source_path, target_path)
+
+        metadata_path = map_dir / "metadata.yaml"
+        metadata = self._read_yaml(metadata_path)
+        artifacts = [
+            artifact
+            for artifact in (metadata.get("artifacts") or [])
+            if isinstance(artifact, dict)
+            and artifact.get("kind") != "native_pointcloud_map_3d"
+        ]
+        artifacts.append(
+            {
+                "kind": "native_pointcloud_map_3d",
+                "path": target_path.name,
+                "topic": pointcloud_topic_3d,
+            }
+        )
+
+        if not metadata.get("created_at"):
+            metadata["created_at"] = datetime.now().isoformat()
+        metadata["representation"] = "pointcloud_map_3d"
+        metadata["pointcloud_topic_3d"] = pointcloud_topic_3d
+        metadata["artifacts"] = artifacts
+
+        with metadata_path.open("w", encoding="utf-8") as handle:
+            yaml.safe_dump(metadata, handle, sort_keys=False)
+
+        saved = self.get_map(map_id)
+        if saved is None:
+            raise StackControlError(f"3D 地图资产已写入，但未能注册地图: {map_id}")
+        return saved
 
     def save_map(self, map_id: str, map_snapshot: MapSnapshot) -> SavedMapInfo:
         map_id = map_id.strip()
@@ -589,6 +895,161 @@ class StackController:
             artifacts=[MapArtifactInfo(**metadata["artifacts"][0])],
         )
 
+    def _resolve_map_dir(self, map_id: str) -> Path:
+        map_id = map_id.strip()
+        if not map_id or not MAP_ID_RE.match(map_id):
+            raise StackControlError("地图名非法")
+        map_dir = (self.map_root / map_id).resolve()
+        map_root = self.map_root.resolve()
+        if map_dir != map_root and map_root not in map_dir.parents:
+            raise StackControlError("非法地图路径")
+        if not map_dir.exists() or not map_dir.is_dir():
+            raise StackControlError(f"地图目录不存在: {map_id}")
+        return map_dir
+
+    def _classify_media_kind(self, file_path: Path, artifact_kind: str | None = None) -> str:
+        suffix = file_path.suffix.lower()
+        if suffix in IMAGE_SUFFIXES:
+            return "image"
+        if suffix in POINTCLOUD_SUFFIXES:
+            return "pointcloud"
+        if suffix == ".pgm" or artifact_kind == "occupancy_grid_2d":
+            return "occupancy"
+        if suffix in {".yaml", ".yml"}:
+            return "yaml"
+        if suffix in TEXT_SUFFIXES:
+            return "text"
+        return "other"
+
+    def _virtual_obstacles_path(self, map_dir: Path) -> Path:
+        return map_dir / "virtual_obstacles.yaml"
+
+    def _normalize_obstacle_id(self, obstacle_id: str | None) -> str:
+        normalized = (obstacle_id or "").strip()
+        if not normalized:
+            normalized = f"obs_{datetime.now().strftime('%H%M%S_%f')}"
+        if not OBSTACLE_ID_RE.fullmatch(normalized):
+            raise StackControlError("障碍物 ID 只能包含字母、数字、下划线、点和短横线")
+        return normalized
+
+    def _load_virtual_obstacles(self, map_dir: Path) -> list[VirtualObstacleZone]:
+        payload = self._read_yaml(self._virtual_obstacles_path(map_dir))
+        raw_entries = payload.get("zones") or payload.get("obstacles") or []
+        if not isinstance(raw_entries, list):
+            return []
+        loaded: list[VirtualObstacleZone] = []
+        for entry in raw_entries:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                obstacle_id = self._normalize_obstacle_id(str(entry.get("obstacle_id") or entry.get("id") or ""))
+                radius = float(entry.get("radius"))
+                x = float(entry.get("x"))
+                y = float(entry.get("y"))
+            except (TypeError, ValueError, StackControlError):
+                continue
+            if not all(math.isfinite(value) for value in (x, y, radius)) or radius <= 0.0:
+                continue
+            loaded.append(
+                VirtualObstacleZone(
+                    obstacle_id=obstacle_id,
+                    label=(str(entry.get("label") or obstacle_id)).strip() or obstacle_id,
+                    kind="circle_keepout",
+                    x=x,
+                    y=y,
+                    radius=radius,
+                    created_at=str(entry.get("created_at") or "") or None,
+                    updated_at=str(entry.get("updated_at") or "") or None,
+                )
+            )
+        loaded.sort(key=lambda zone: zone.obstacle_id)
+        return loaded
+
+    def _write_virtual_obstacles(self, map_dir: Path, obstacles: list[VirtualObstacleZone]) -> None:
+        payload = {
+            "version": 1,
+            "zones": [
+                {
+                    "obstacle_id": obstacle.obstacle_id,
+                    "label": obstacle.label,
+                    "kind": obstacle.kind,
+                    "x": float(obstacle.x),
+                    "y": float(obstacle.y),
+                    "radius": float(obstacle.radius),
+                    "created_at": obstacle.created_at,
+                    "updated_at": obstacle.updated_at,
+                }
+                for obstacle in obstacles
+            ],
+        }
+        with self._virtual_obstacles_path(map_dir).open("w", encoding="utf-8") as handle:
+            yaml.safe_dump(payload, handle, sort_keys=False, allow_unicode=True)
+
+    def _read_map_media_index(self, map_dir: Path) -> ExplicitMediaIndex:
+        metadata = self._read_yaml(map_dir / "metadata.yaml")
+        candidates: list[Any] = []
+        media_index_file = map_dir / "media_index.yaml"
+        if media_index_file.exists():
+            media_index_payload = self._read_yaml(media_index_file)
+            candidates.append(media_index_payload.get("entries"))
+        candidates.append(metadata.get("media_entries"))
+        candidates.append(metadata.get("media_index", {}).get("entries") if isinstance(metadata.get("media_index"), dict) else None)
+
+        index: ExplicitMediaIndex = {}
+        for candidate in candidates:
+            if not isinstance(candidate, list):
+                continue
+            for entry in candidate:
+                if not isinstance(entry, dict):
+                    continue
+                raw_path = str(entry.get("path") or "").strip()
+                if not raw_path:
+                    continue
+                normalized = Path(raw_path).as_posix()
+                index[normalized] = entry
+        return index
+
+    def _normalize_media_link(self, value: Any, candidates: set[str]) -> str | None:
+        if not value:
+            return None
+        normalized = Path(str(value)).as_posix()
+        return normalized if normalized in candidates else None
+
+    def _find_linked_pointcloud_path(self, relative_path: str, candidates: set[str]) -> str | None:
+        stem = Path(relative_path).stem
+        parent = Path(relative_path).parent
+        search_dirs = [
+            parent,
+            parent / "PCD",
+            parent / "pcd",
+            Path("PCD"),
+            Path("pcd"),
+            Path("pointcloud"),
+            Path("pointclouds"),
+        ]
+        for directory in search_dirs:
+            candidate = (directory / f"{stem}.pcd").as_posix()
+            if candidate in candidates:
+                return candidate
+        return None
+
+    def _find_linked_image_path(self, relative_path: str, candidates: set[str]) -> str | None:
+        stem = Path(relative_path).stem
+        parent = Path(relative_path).parent
+        search_dirs = [
+            parent,
+            parent / "images",
+            parent / "img",
+            Path("images"),
+            Path("img"),
+        ]
+        for directory in search_dirs:
+            for suffix in IMAGE_SUFFIXES:
+                candidate = (directory / f"{stem}{suffix}").as_posix()
+                if candidate in candidates:
+                    return candidate
+        return None
+
     def status(self) -> StackStatus:
         processes = self._process_records()
         runtime_state = self._read_runtime_state()
@@ -635,6 +1096,9 @@ class StackController:
         has_nav = any(
             "bt_navigator" in proc.args
             or "controller_server" in proc.args
+            or "jt128_3d_navigation.launch.py" in proc.args
+            or "pose_goal_controller_3d" in proc.args
+            or "pcd_relocalizer_3d" in proc.args
             for proc in processes
         )
         has_mapping = any(
@@ -703,7 +1167,15 @@ class StackController:
         log_dir = self.workspace / "runtime" / "logs"
         if not log_dir.exists():
             return None
-        logs = sorted(log_dir.glob("bringup_real_*.log"), key=lambda path: path.stat().st_mtime, reverse=True)
+        logs = sorted(
+            [
+                *log_dir.glob("jt128_3d_navigation_*.log"),
+                *log_dir.glob("jt128_dlio_mapping_*.log"),
+                *log_dir.glob("bringup_real_*.log"),
+            ],
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
         return str(logs[0]) if logs else None
 
     def _build_start_timeout_message(self, mode: str, missing_labels: list[str]) -> str:

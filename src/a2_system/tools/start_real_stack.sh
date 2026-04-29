@@ -86,5 +86,5 @@ echo "network_interface=${IFACE:-<empty>}"
 echo "cyclonedds_bind_status=${A2_CYCLONEDDS_BIND_STATUS:-unknown}"
 echo "cyclonedds_bind_reason=${A2_CYCLONEDDS_BIND_REASON:-unknown}"
 if [[ "${A2_REAL_DIAGNOSTIC_ONLY:-0}" == "1" ]]; then
-  echo "Real stack started in diagnostic mode. A ready wired interface is required before A2/MID360 data can go online."
+  echo "Real stack started in diagnostic mode. A ready wired interface is required before A2 data can go online."
 fi

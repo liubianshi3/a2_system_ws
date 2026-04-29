@@ -134,7 +134,7 @@ def main():
     )
     parser.add_argument(
         "--mode",
-        choices=["auto", "mock", "gazebo", "real"],
+        choices=["auto", "real"],
         default="auto",
         help="Evaluation mode. auto follows configuration.",
     )
@@ -150,12 +150,10 @@ def main():
     rmw = os.environ.get("RMW_IMPLEMENTATION", "")
     sdk_root = pathlib.Path(os.environ.get("UNITREE_SDK2_ROOT", "/opt/unitree_robotics"))
     configured_iface = network_cfg.get("network", {}).get("network_interface", "")
-    use_mock = sdk_cfg.get("a2_sdk_bridge", {}).get("ros__parameters", {}).get("use_mock", True)
-    control_mock = motion_cfg.get("a2_control_bridge", {}).get("ros__parameters", {}).get("use_mock", True)
     requested_iface = args.interface or configured_iface
     effective_mode = args.mode
     if effective_mode == "auto":
-        effective_mode = "mock" if use_mock else "real"
+        effective_mode = "real"
     required_bins = ["ip", "ping", "ros2", "colcon"]
     optional_bins = ["rviz2"]
     required_packages = ["nav2_msgs", "tf2_ros"]
@@ -175,8 +173,6 @@ def main():
     print(f"ros_distro          : {ros_distro or '<unset>'}")
     print(f"rmw_implementation  : {rmw or '<unset>'}")
     print(f"requested_mode      : {effective_mode}")
-    print(f"use_mock            : {use_mock}")
-    print(f"control_use_mock    : {control_mock}")
     print(f"configured_interface: {configured_iface or '<empty>'}")
     print(f"requested_interface : {requested_iface or '<empty>'}")
     print(f"unitree_sdk2_root   : {sdk_root}")
@@ -233,8 +229,6 @@ def main():
         if not ready_real_candidates and existing_wired_candidates:
             print(f"wired_candidates_only : {', '.join(existing_wired_candidates)}")
             print("[WARN] no wired interface is carrier-up. start_real_stack.sh will fall back to diagnostic mode.")
-        if not ros2_pkg_exists("livox_ros_driver2"):
-            print("[WARN] livox_ros_driver2 is missing. MID360 real driver launch will stay guarded/offline.")
         if not ros2_pkg_exists("fast_lio"):
             print("[WARN] fast_lio is missing. Real 3D LiDAR/IMU SLAM will stay in orchestrator waiting mode.")
 
@@ -262,11 +256,7 @@ def main():
                 f"suggestion          : install/a2_system/share/a2_system/start_real_stack.sh {suggested_iface}"
             )
         else:
-            print("suggestion          : no ready wired interface detected; connect the A2/MID360 Ethernet link first, then rerun this check.")
-    elif effective_mode == "gazebo":
-        print("suggestion          : install/a2_system/share/a2_system/start_gazebo_stack.sh")
-    else:
-        print("suggestion          : use mock launch first, then switch use_mock:=false after confirming A2 and MID360 connectivity.")
+            print("suggestion          : no ready wired interface detected; connect the A2 Ethernet link first, then rerun this check.")
     return 0
 
 

@@ -1,7 +1,7 @@
 occupancy_mapper:
   ros__parameters:
     map_topic: /map
-    pointcloud_topic: /mid360/points
+    pointcloud_topic: /jt128/front/points
     odom_topic: /odom
     frame_id: map
     width: 600

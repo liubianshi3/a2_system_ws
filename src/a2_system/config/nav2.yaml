@@ -2,7 +2,8 @@ goal_bridge:
   ros__parameters:
     exploration_goal_topic: /a2/exploration/goal
     navigation_backend: pose_topic_3d
-    pose_goal_topic: /goal_pose_
+    pose_goal_topic: /a2/nav3/goal_pose
+    legacy_pose_goal_topic: /goal_pose_
     navigate_action_name: navigate_to_pose
     goal_timeout_sec: 180.0
     action_wait_timeout_sec: 0.5

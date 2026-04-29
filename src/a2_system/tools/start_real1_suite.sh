@@ -13,11 +13,11 @@ FRONTEND_BUILD_SCRIPT="${WORKSPACE}/web_console/scripts/build_frontend.sh"
 STATIC_INDEX="${WORKSPACE}/web_console/backend/static/index.html"
 WEB_SERVICE_UNIT_FILE="${A2_WEB_SERVICE_UNIT_FILE:-${WORKSPACE}/web_console/systemd/a2-web-console.service}"
 WEB_VENV_PYTHON="${WORKSPACE}/web_console/.venv/bin/python"
-RESIDUAL_PATTERN="bringup.launch.py|a2_sdk_bridge|a2_control_bridge|task_manager.py|pointcloud_frame_relay|pointcloud_to_laserscan|slam_toolbox|native_map_relay|localization_gate|manual_localization_publisher|amcl|goal_bridge|occupancy_mapper|map_manager|map_server|controller_server|smoother_server|planner_server|behavior_server|bt_navigator|waypoint_follower|velocity_smoother|lifecycle_manager"
+RESIDUAL_PATTERN="bringup.launch.py|a2_sdk_bridge|a2_control_bridge|task_manager.py|pointcloud_relay|pointcloud_to_laserscan|slam_toolbox|native_map_relay|localization_gate|manual_localization_publisher|amcl|goal_bridge|occupancy_mapper|map_manager|map_server|controller_server|smoother_server|planner_server|behavior_server|bt_navigator|waypoint_follower|velocity_smoother|lifecycle_manager"
 INTERFERENCE_CONTAINER="${A2_INTERFERENCE_CONTAINER:-festive_johnson}"
 GRAPH_PID_WS="${A2_GRAPH_PID_WS:-$HOME/graph_pid_ws}"
 UNITREE_SLAM_SERVICE="${A2_UNITREE_SLAM_SERVICE:-unitree_slam.service}"
-NATIVE_LIDAR_TOPIC="${A2_NATIVE_LIDAR_TOPIC:-/unitree/slam_lidar/points1}"
+NATIVE_LIDAR_TOPIC="${A2_NATIVE_LIDAR_TOPIC:-/jt128/front/points}"
 NATIVE_NAV_INTERFERENCE_PATTERN="${A2_NATIVE_NAV_INTERFERENCE_PATTERN:-navigation_mapping.py|dwa_obstacle_avoidance.py}"
 ROS1_INTERFERENCE_PATTERN="${A2_ROS1_INTERFERENCE_PATTERN:-rosmaster|roslaunch x_nav_control|foxglove_bridge|a2_ros1_sdk}"
 REAL_LIDAR_CONFIG="${WORKSPACE}/src/a2_system/config/real_lidar.yaml"
@@ -242,7 +242,7 @@ cleanup_residuals() {
   pkill -f "a2_sdk_bridge_node" >/dev/null 2>&1 || true
   pkill -f "a2_control_bridge_node" >/dev/null 2>&1 || true
   pkill -f "task_manager.py" >/dev/null 2>&1 || true
-  pkill -f "pointcloud_frame_relay" >/dev/null 2>&1 || true
+  pkill -f "pointcloud_relay" >/dev/null 2>&1 || true
   pkill -f "pointcloud_to_laserscan" >/dev/null 2>&1 || true
   pkill -f "slam_toolbox" >/dev/null 2>&1 || true
   pkill -f "native_map_relay" >/dev/null 2>&1 || true

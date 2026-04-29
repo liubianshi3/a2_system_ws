@@ -2,7 +2,63 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import types
 from pathlib import Path
+
+
+def _install_stub_modules():
+    if "rclpy" not in sys.modules:
+        rclpy = types.ModuleType("rclpy")
+        rclpy.init = lambda *args, **kwargs: None
+        rclpy.shutdown = lambda *args, **kwargs: None
+        rclpy.spin_until_future_complete = lambda *args, **kwargs: None
+        sys.modules["rclpy"] = rclpy
+
+    if "rclpy.action" not in sys.modules:
+        action_mod = types.ModuleType("rclpy.action")
+        action_mod.ActionClient = type("ActionClient", (), {})
+        sys.modules["rclpy.action"] = action_mod
+
+    if "rclpy.callback_groups" not in sys.modules:
+        callback_groups_mod = types.ModuleType("rclpy.callback_groups")
+        callback_groups_mod.ReentrantCallbackGroup = type("ReentrantCallbackGroup", (), {})
+        sys.modules["rclpy.callback_groups"] = callback_groups_mod
+
+    if "rclpy.executors" not in sys.modules:
+        executors_mod = types.ModuleType("rclpy.executors")
+        executors_mod.MultiThreadedExecutor = type("MultiThreadedExecutor", (), {})
+        sys.modules["rclpy.executors"] = executors_mod
+
+    if "rclpy.node" not in sys.modules:
+        node_mod = types.ModuleType("rclpy.node")
+        node_mod.Node = type("Node", (), {})
+        sys.modules["rclpy.node"] = node_mod
+
+    def _register_module(module_name: str, names: list[str]):
+        if module_name in sys.modules:
+            return
+        module = types.ModuleType(module_name)
+        for name in names:
+            setattr(module, name, type(name, (), {}))
+        sys.modules[module_name] = module
+
+    _register_module("action_msgs.msg", ["GoalStatus"])
+    _register_module("geometry_msgs.msg", ["PoseStamped", "PoseWithCovarianceStamped"])
+    _register_module("std_msgs.msg", ["String"])
+
+    if "a2_interfaces.srv" not in sys.modules:
+        srv_mod = types.ModuleType("a2_interfaces.srv")
+        srv_mod.ManageMap = type("ManageMap", (), {"Response": type("Response", (), {})})
+        srv_mod.NavCommand = type(
+            "NavCommand",
+            (),
+            {"Request": type("Request", (), {}), "Response": type("Response", (), {})},
+        )
+        srv_mod.SetMode = type("SetMode", (), {"Response": type("Response", (), {})})
+        sys.modules["a2_interfaces.srv"] = srv_mod
+
+
+_install_stub_modules()
 
 
 def load_module():

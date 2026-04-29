@@ -3,7 +3,9 @@ map_manager:
     map_root: ${A2_WORKSPACE}/runtime/maps
     occupancy_topic: /map
     map_representation: pointcloud_map_3d
-    pointcloud_topic_3d: /unitree/slam_lidar/points1
+    pointcloud_topic_3d: /jt128/dlio/map_points
+    pointcloud_fallback_topic_3d: ""
+    pointcloud_primary_stale_sec: 2.0
     pointcloud_snapshot_enabled: true
     pointcloud_max_points: 200000
     active_map_topic: /a2/map_manager/active_map

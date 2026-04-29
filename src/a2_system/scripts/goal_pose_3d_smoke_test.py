@@ -138,21 +138,21 @@ class GoalPose3DSmokeNode(Node):
             if distance <= self.args.position_tolerance_m and yaw_error <= self.args.yaw_tolerance_rad:
                 self.publish_stop()
                 print(
-                    "PASS: 3D /goal_pose_ reached "
-                    f"distance={distance:.3f}m yaw_error={yaw_error:.3f}rad"
+                    "PASS: 3D goal reached "
+                    f"topic={self.args.goal_topic} distance={distance:.3f}m yaw_error={yaw_error:.3f}rad"
                 )
                 return 0
         self.publish_stop()
-        print("FAIL: 3D /goal_pose_ goal timed out; stop signal published", file=sys.stderr)
+        print(f"FAIL: 3D goal timed out on {self.args.goal_topic}; stop signal published", file=sys.stderr)
         return 1
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="A2 3D /goal_pose_ closed-loop smoke test")
+    parser = argparse.ArgumentParser(description="A2 3D local-goal closed-loop smoke test")
     parser.add_argument("--pose-topic", default="/odom")
     parser.add_argument("--localization-ok-topic", default="/a2/localization_ok")
-    parser.add_argument("--pointcloud-topic", default="/unitree/slam_lidar/points1")
-    parser.add_argument("--goal-topic", default="/goal_pose_")
+    parser.add_argument("--pointcloud-topic", default="/jt128/front/points")
+    parser.add_argument("--goal-topic", default="/a2/nav3/goal_pose")
     parser.add_argument("--goal-frame", default="map")
     parser.add_argument("--stop-topic", default="/cmd_vel")
     parser.add_argument("--relative-x", type=float, default=0.25)

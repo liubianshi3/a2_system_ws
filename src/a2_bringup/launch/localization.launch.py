@@ -3,20 +3,16 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from a2_bringup.runtime_mode import normalize_runtime_mode, is_simulated_mode, as_bool
+from a2_bringup.runtime_mode import normalize_runtime_mode, as_bool
 
 
 def _launch_setup(context, *args, **kwargs):
     del args, kwargs
-    runtime_mode = normalize_runtime_mode(
-        LaunchConfiguration("runtime_mode").perform(context),
-        LaunchConfiguration("use_mock").perform(context),
-    )
+    runtime_mode = normalize_runtime_mode(LaunchConfiguration("runtime_mode").perform(context))
     enable_nav2_bringup = as_bool(LaunchConfiguration("enable_nav2_bringup").perform(context))
     real_localization_mode = (
         LaunchConfiguration("real_localization_mode").perform(context).strip() or "amcl"
     )
-    use_mock = runtime_mode == "mock"
     use_sim_time = as_bool(LaunchConfiguration("use_sim_time").perform(context))
     a2_system_share = get_package_share_directory("a2_system")
     actions = []
@@ -25,15 +21,6 @@ def _launch_setup(context, *args, **kwargs):
         and enable_nav2_bringup
         and real_localization_mode == "manual_odom"
     )
-    if is_simulated_mode(runtime_mode) and not enable_nav2_bringup:
-        actions.append(
-            Node(
-                package="localization_manager",
-                executable="mock_localization_publisher",
-                name="mock_localization_publisher",
-                parameters=[f"{a2_system_share}/config/mock_localization.yaml", {"use_sim_time": use_sim_time}],
-            )
-        )
     if use_manual_real_localization:
         actions.append(
             Node(
@@ -59,14 +46,13 @@ def _launch_setup(context, *args, **kwargs):
     actions.append(
         Node(
             package="localization_manager",
-                executable="localization_gate",
-                name="localization_gate",
-                parameters=[f"{a2_system_share}/config/localization.yaml", {
-                    "use_mock": use_mock,
-                    "runtime_mode": runtime_mode,
-                    "latch_valid_pose": enable_nav2_bringup,
-                    "use_sim_time": use_sim_time,
-                }],
+            executable="localization_gate",
+            name="localization_gate",
+            parameters=[f"{a2_system_share}/config/localization.yaml", {
+                "runtime_mode": runtime_mode,
+                "latch_valid_pose": enable_nav2_bringup,
+                "use_sim_time": use_sim_time,
+            }],
         )
     )
     return actions
@@ -75,7 +61,6 @@ def _launch_setup(context, *args, **kwargs):
 def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument("runtime_mode", default_value=""),
-        DeclareLaunchArgument("use_mock", default_value="true"),
         DeclareLaunchArgument("use_sim_time", default_value="false"),
         DeclareLaunchArgument("enable_nav2_bringup", default_value="false"),
         DeclareLaunchArgument("real_localization_mode", default_value="amcl"),

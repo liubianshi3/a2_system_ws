@@ -93,12 +93,12 @@ def _render_fastlio_config(a2_system_share, runtime_dir):
     runtime_dir.mkdir(parents=True, exist_ok=True)
     map_dir = Path.home() / "a2_system_ws" / "runtime" / "maps" / "fastlio"
     map_dir.mkdir(parents=True, exist_ok=True)
-    config_path = runtime_dir / "fastlio_mid360.yaml"
+    config_path = runtime_dir / "fastlio_front_lidar.yaml"
 
     rendered = {
         "common": {
-            "lid_topic": slam_params.get("livox_custom_topic", "/livox/lidar"),
-            "imu_topic": slam_params.get("imu_topic", "/imu/data"),
+            "lid_topic": slam_params.get("pointcloud_topic", "/jt128/front/points"),
+            "imu_topic": slam_params.get("imu_topic", "/jt128/front/imu"),
             "time_sync_en": False,
             "time_offset_lidar_to_imu": 0.0,
         },
@@ -147,9 +147,7 @@ def _launch_setup(context, *args, **kwargs):
     del args, kwargs
     runtime_mode = normalize_runtime_mode(
         LaunchConfiguration("runtime_mode").perform(context),
-        LaunchConfiguration("use_mock").perform(context),
     )
-    use_mock = runtime_mode == "mock"
     use_sim_time = _as_bool(LaunchConfiguration("use_sim_time").perform(context))
     a2_system_share = get_package_share_directory("a2_system")
     runtime_dir = Path.home() / "a2_system_ws" / "runtime" / "generated"
@@ -212,7 +210,6 @@ def _launch_setup(context, *args, **kwargs):
             parameters=[
                 f"{a2_system_share}/config/slam_manager.yaml",
                 {
-                    "use_mock": use_mock,
                     "runtime_mode": runtime_mode,
                     "stack_profile": stack_profile,
                     "stack_available": stack_available,
@@ -229,7 +226,6 @@ def _launch_setup(context, *args, **kwargs):
 def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument("runtime_mode", default_value=""),
-        DeclareLaunchArgument("use_mock", default_value="true"),
         DeclareLaunchArgument("use_sim_time", default_value="false"),
         OpaqueFunction(function=_launch_setup),
     ])

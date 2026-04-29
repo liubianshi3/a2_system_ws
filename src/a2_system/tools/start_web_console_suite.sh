@@ -16,14 +16,14 @@ RUNTIME_STATE_FILE="${WORKSPACE}/runtime/web_stack_state.yaml"
 INTERFERENCE_CONTAINER="${A2_INTERFERENCE_CONTAINER:-festive_johnson}"
 GRAPH_PID_WS="${A2_GRAPH_PID_WS:-$HOME/graph_pid_ws}"
 UNITREE_SLAM_SERVICE="${A2_UNITREE_SLAM_SERVICE:-unitree_slam.service}"
-NATIVE_LIDAR_TOPIC="${A2_NATIVE_LIDAR_TOPIC:-/unitree/slam_lidar/points1}"
+NATIVE_LIDAR_TOPIC="${A2_NATIVE_LIDAR_TOPIC:-/jt128/front/points}"
 NATIVE_NAV_INTERFERENCE_PATTERN="${A2_NATIVE_NAV_INTERFERENCE_PATTERN:-navigation_mapping.py|dwa_obstacle_avoidance.py}"
 ROS1_INTERFERENCE_PATTERN="${A2_ROS1_INTERFERENCE_PATTERN:-rosmaster|roslaunch x_nav_control|foxglove_bridge|a2_ros1_sdk}"
 REAL_LIDAR_CONFIG="${WORKSPACE}/src/a2_system/config/real_lidar.yaml"
 NETWORK_CONFIG="${WORKSPACE}/src/a2_system/config/network.yaml"
 FORCE_BUILD_WEB="${A2_FORCE_BUILD_WEB:-0}"
 STARTUP_HINT_MESSAGE="Web 控制台已就绪，请在页面选择建图或导航模式"
-RESIDUAL_PATTERN="bringup.launch.py|a2_state_publisher_node|a2_sdk_bridge_node|a2_control_bridge_node|task_manager.py|safety_supervisor|real_readiness_monitor|static_tf_manager|sync_monitor|pointcloud_frame_relay|pointcloud_to_laserscan|slam_toolbox|native_map_relay|localization_gate|manual_localization_publisher|amcl|goal_bridge|occupancy_mapper|map_manager_node|map_server|controller_server|smoother_server|planner_server|behavior_server|bt_navigator|waypoint_follower|velocity_smoother|lifecycle_manager"
+RESIDUAL_PATTERN="bringup.launch.py|a2_state_publisher_node|a2_sdk_bridge_node|a2_control_bridge_node|task_manager.py|safety_supervisor|real_readiness_monitor|static_tf_manager|sync_monitor|pointcloud_relay|pointcloud_accumulator|pointcloud_to_laserscan|slam_toolbox|native_map_relay|localization_gate|manual_localization_publisher|amcl|goal_bridge|occupancy_mapper|map_manager_node|map_server|controller_server|smoother_server|planner_server|behavior_server|bt_navigator|waypoint_follower|velocity_smoother|lifecycle_manager"
 
 SKIP_NATIVE_LIDAR=0
 
@@ -114,10 +114,28 @@ wait_http_ok() {
 wait_topic_message() {
   local topic="$1"
   local timeout_sec="$2"
-  if timeout "${timeout_sec}"s ros2 topic echo --once "$topic" >/dev/null 2>&1; then
+  if timeout "${timeout_sec}"s ros2 topic echo --qos-reliability best_effort --once "$topic" >/dev/null 2>&1; then
     return 0
   fi
   return 1
+}
+
+wait_topic_publisher() {
+  local topic="$1"
+  local timeout_sec="$2"
+  local start_ts
+  local count
+  start_ts="$(date +%s)"
+  while true; do
+    count="$(ros2 topic info "$topic" 2>/dev/null | awk -F': ' '/Publisher count:/ {print $2; exit}' || true)"
+    if [[ "${count:-0}" =~ ^[0-9]+$ ]] && (( count > 0 )); then
+      return 0
+    fi
+    if (( $(date +%s) - start_ts >= timeout_sec )); then
+      return 1
+    fi
+    sleep 1
+  done
 }
 
 read_real_lidar_mode() {
@@ -199,7 +217,8 @@ cleanup_residuals() {
   pkill -f "real_readiness_monitor" >/dev/null 2>&1 || true
   pkill -f "static_tf_manager" >/dev/null 2>&1 || true
   pkill -f "sync_monitor" >/dev/null 2>&1 || true
-  pkill -f "pointcloud_frame_relay" >/dev/null 2>&1 || true
+  pkill -f "pointcloud_relay" >/dev/null 2>&1 || true
+  pkill -f "pointcloud_accumulator" >/dev/null 2>&1 || true
   pkill -f "pointcloud_to_laserscan" >/dev/null 2>&1 || true
   pkill -f "slam_toolbox" >/dev/null 2>&1 || true
   pkill -f "native_map_relay" >/dev/null 2>&1 || true
@@ -375,12 +394,17 @@ if (( USE_NATIVE_LIDAR_SOURCE == 1 )); then
     sudo systemctl start "${UNITREE_SLAM_SERVICE}"
   fi
   if (( SERVICE_WAS_ACTIVE == 0 )); then
-    if ! wait_topic_message "${NATIVE_LIDAR_TOPIC}" 20; then
+    if ! wait_topic_publisher "${NATIVE_LIDAR_TOPIC}" 60; then
       show_failure_context
       die "Native lidar topic did not become active: ${NATIVE_LIDAR_TOPIC}"
     fi
+    if wait_topic_message "${NATIVE_LIDAR_TOPIC}" 10; then
+      log "Validated native lidar pointcloud sample ${NATIVE_LIDAR_TOPIC}"
+    else
+      warn "Native lidar publisher is active but sample echo timed out; continuing because PointCloud2 QoS may be best-effort"
+    fi
   else
-    if wait_topic_message "${NATIVE_LIDAR_TOPIC}" 5; then
+    if wait_topic_publisher "${NATIVE_LIDAR_TOPIC}" 10; then
       log "Validated native lidar topic ${NATIVE_LIDAR_TOPIC}"
     else
       warn "Could not validate ${NATIVE_LIDAR_TOPIC} via ros2 CLI, but ${UNITREE_SLAM_SERVICE} is already active; continuing"

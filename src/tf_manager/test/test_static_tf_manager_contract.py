@@ -16,6 +16,19 @@ def test_static_tf_contract_accepts_valid_sensor_child():
     assert reason == "ok"
 
 
+def test_static_tf_contract_accepts_rotation_matrix():
+    valid, reason = validate_static_tf_contract(
+        "base_link",
+        "jt128_front_link",
+        [0.33767, 0.0, 0.08134],
+        [0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+        {"map", "odom"},
+        set(),
+    )
+    assert valid is True
+    assert reason == "ok"
+
+
 def test_static_tf_contract_rejects_dynamic_and_duplicate_children():
     assert validate_static_tf_contract(
         "base_link",

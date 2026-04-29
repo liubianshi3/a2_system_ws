@@ -33,9 +33,10 @@ except ImportError:  # pragma: no cover - runtime environment fallback
     RobotState = None
 
 try:
-    from a2_interfaces.srv import ManageMap
+    from a2_interfaces.srv import ManageMap, NavCommand
 except ImportError:  # pragma: no cover - runtime environment fallback
     ManageMap = None
+    NavCommand = None
 
 try:
     from nav2_msgs.action import NavigateToPose
@@ -74,6 +75,7 @@ from .models import (
     RobotPose,
     RobotStatus,
     SystemHealth,
+    TaskRouteStatus,
     TextStatus,
 )
 from .utils import deep_copy_model, dump_model, now_iso, parse_optional_bool, parse_status_string, quaternion_to_yaw
@@ -204,11 +206,14 @@ class RosBridgeNode(Node):
         self.health = SystemHealth(ros_connected=True)
         self._last_tf_frame: str | None = None
         self._last_camera_publish_monotonic = 0.0
+        self._last_primary_pointcloud_monotonic = 0.0
+        self._last_fallback_pointcloud_monotonic = 0.0
         self._active_pose_goal: NavigationGoal | None = None
         self._active_pose_goal_started_at: float | None = None
         self._native_slam_response_cv = threading.Condition()
         self._native_slam_responses: dict[int, dict[str, Any]] = {}
         self.manage_map_client = None
+        self.task_command_client = None
 
         self._setup_subscriptions()
         if ManageMap is not None:
@@ -218,6 +223,14 @@ class RosBridgeNode(Node):
         else:
             self.get_logger().warning(
                 "a2_interfaces.srv.ManageMap is unavailable. Map save/load bridge will be disabled."
+            )
+        if NavCommand is not None:
+            self.task_command_client = self.create_client(
+                NavCommand, self.config.ros.task_manager_service
+            )
+        else:
+            self.get_logger().warning(
+                "a2_interfaces.srv.NavCommand is unavailable. Task manager bridge will be disabled."
             )
         self.initial_pose_publisher = self.create_publisher(
             PoseWithCovarianceStamped,
@@ -269,7 +282,19 @@ class RosBridgeNode(Node):
         )
         self.create_subscription(OccupancyGrid, ros.map_topic, self._on_map, latched_qos)
         self.create_subscription(OccupancyGrid, ros.map_topic, self._on_map, 10)
-        self.create_subscription(PointCloud2, ros.pointcloud_topic, self._on_pointcloud, 10)
+        self.create_subscription(
+            PointCloud2,
+            ros.pointcloud_topic,
+            lambda msg: self._on_pointcloud(msg, ros.pointcloud_topic, primary=True),
+            10,
+        )
+        if ros.pointcloud_fallback_topic and ros.pointcloud_fallback_topic != ros.pointcloud_topic:
+            self.create_subscription(
+                PointCloud2,
+                ros.pointcloud_fallback_topic,
+                lambda msg: self._on_pointcloud(msg, ros.pointcloud_fallback_topic, primary=False),
+                10,
+            )
         if ros.localization_pose_msg_type == "nav_msgs/msg/Odometry":
             self.create_subscription(Odometry, ros.localization_pose_topic, self._on_localization_odom, 20)
         else:
@@ -417,6 +442,24 @@ class RosBridgeNode(Node):
         published["message"] = "已发送 Unitree 原生 SLAM 保存地图命令"
         return published
 
+    def request_native_initial_pose(self, pose: NavigationGoal, map_path: str) -> dict[str, Any]:
+        published = self._publish_native_slam_request(
+            1804,
+            {
+                "x": float(pose.x),
+                "y": float(pose.y),
+                "z": 0.0,
+                "q_x": 0.0,
+                "q_y": 0.0,
+                "q_z": math.sin(float(pose.yaw) / 2.0),
+                "q_w": math.cos(float(pose.yaw) / 2.0),
+                "address": str(map_path),
+            },
+        )
+        published["map_path"] = str(map_path)
+        published["message"] = "已发送 Unitree 原生 3D 初始位姿"
+        return published
+
     def save_managed_map(self, map_id: str) -> dict[str, Any]:
         if self.manage_map_client is None or ManageMap is None:
             raise RosBridgeError("manage_map service client 不可用")
@@ -440,6 +483,155 @@ class RosBridgeNode(Node):
             "message": response.message,
             "map_ids": list(response.map_ids),
         }
+
+    def _call_task_command(
+        self,
+        *,
+        command: str,
+        map_id: str = "",
+        route_id: str = "",
+        mode: str = "",
+        mission_name: str = "",
+        route_yaml: str = "",
+        waypoints_file: str = "",
+        dry_run: bool = False,
+        stop_on_failure: bool = True,
+        save_map_on_finish: bool = False,
+        save_map_on_failure: bool = False,
+        pose: PoseStamped | None = None,
+    ) -> Any:
+        if self.task_command_client is None or NavCommand is None:
+            raise RosBridgeError("task_manager service client 不可用")
+        if not self.task_command_client.wait_for_service(timeout_sec=2.0):
+            raise RosBridgeError("task_manager service 不可用")
+
+        request = NavCommand.Request()
+        request.command = command
+        request.map_id = map_id
+        request.route_id = route_id
+        request.mode = mode
+        request.mission_name = mission_name
+        request.route_yaml = route_yaml
+        request.waypoints_file = waypoints_file
+        request.dry_run = bool(dry_run)
+        request.stop_on_failure = bool(stop_on_failure)
+        request.save_map_on_finish = bool(save_map_on_finish)
+        request.save_map_on_failure = bool(save_map_on_failure)
+        if pose is not None:
+            request.pose = pose
+
+        future = self.task_command_client.call_async(request)
+        done = threading.Event()
+        future.add_done_callback(lambda _: done.set())
+        if not done.wait(timeout=8.0):
+            raise RosBridgeError(f"task_manager {command} 超时")
+        response = future.result()
+        if response is None:
+            raise RosBridgeError(f"task_manager {command} 未返回结果")
+        if not response.success:
+            raise RosBridgeError(response.message or f"task_manager {command} 失败")
+        return response
+
+    def _task_route_status_from_text_status(self) -> TaskRouteStatus:
+        with self._lock:
+            status = deep_copy_model(self.status.task_manager_status)
+
+        def normalize_optional(value: str | None) -> str | None:
+            normalized = (value or "").strip()
+            if not normalized or normalized.lower() == "none":
+                return None
+            return normalized
+
+        fields = dict(status.fields)
+        return TaskRouteStatus(
+            raw=status.raw,
+            ready=status.ready,
+            state=status.state,
+            reason=status.reason,
+            current_mode=normalize_optional(fields.get("current_mode")),
+            active_map=normalize_optional(fields.get("active_map")),
+            route_state=normalize_optional(fields.get("route_state")),
+            route_id=normalize_optional(fields.get("route_id")),
+            route_path=normalize_optional(fields.get("route_path")),
+            report_path=normalize_optional(fields.get("report_path")),
+            fields=fields,
+        )
+
+    def task_list_routes(self) -> list[str]:
+        response = self._call_task_command(command="list_routes")
+        return list(response.items)
+
+    def task_get_route(self, route_id: str) -> dict[str, Any]:
+        response = self._call_task_command(command="get_route", route_id=route_id.strip())
+        return {
+            "route_id": response.route_id,
+            "route_path": response.route_path,
+            "route_yaml": response.route_yaml,
+        }
+
+    def task_save_route(self, route_id: str, route_yaml: str) -> dict[str, Any]:
+        response = self._call_task_command(
+            command="save_route",
+            route_id=route_id.strip(),
+            route_yaml=route_yaml,
+        )
+        return {
+            "route_id": response.route_id,
+            "route_path": response.route_path,
+            "route_yaml": response.route_yaml,
+            "items": list(response.items),
+        }
+
+    def task_delete_route(self, route_id: str) -> list[str]:
+        response = self._call_task_command(command="delete_route", route_id=route_id.strip())
+        return list(response.items)
+
+    def task_run_route(
+        self,
+        *,
+        route_id: str,
+        mission_name: str = "",
+        dry_run: bool = False,
+        stop_on_failure: bool = True,
+        save_map_on_finish: bool = False,
+        save_map_on_failure: bool = False,
+    ) -> dict[str, Any]:
+        response = self._call_task_command(
+            command="run_route",
+            route_id=route_id.strip(),
+            mission_name=mission_name,
+            dry_run=dry_run,
+            stop_on_failure=stop_on_failure,
+            save_map_on_finish=save_map_on_finish,
+            save_map_on_failure=save_map_on_failure,
+        )
+        return {
+            "route_id": response.route_id,
+            "route_path": response.route_path,
+            "mission_state": response.mission_state,
+            "message": response.message,
+        }
+
+    def task_stop_route(self) -> TaskRouteStatus:
+        self._call_task_command(command="stop_route")
+        return self.task_route_status()
+
+    def task_route_status(self) -> TaskRouteStatus:
+        service_response = self._call_task_command(command="route_status")
+        status = self._task_route_status_from_text_status()
+        if not status.current_mode and service_response.current_mode:
+            status.current_mode = service_response.current_mode
+        if not status.active_map and service_response.active_map:
+            status.active_map = service_response.active_map
+        if not status.route_id and service_response.route_id:
+            status.route_id = service_response.route_id
+        if not status.route_path and service_response.route_path:
+            status.route_path = service_response.route_path
+        if not status.report_path and service_response.report_path:
+            status.report_path = service_response.report_path
+        if not status.route_state and service_response.mission_state:
+            status.route_state = service_response.mission_state
+        return status
 
     def _on_map(self, msg: OccupancyGrid) -> None:
         orientation = msg.info.origin.orientation
@@ -465,15 +657,44 @@ class RosBridgeNode(Node):
         self._publish("map", dump_model(map_snapshot))
         self._publish("health", self.get_health_dict())
 
-    def _on_pointcloud(self, msg: PointCloud2) -> None:
+    def _on_pointcloud(self, msg: PointCloud2, topic: str, *, primary: bool) -> None:
         try:
-            pointcloud_snapshot = self._pointcloud_snapshot_from_msg(msg)
+            pointcloud_snapshot = self._pointcloud_snapshot_from_msg(msg, topic)
         except Exception as exc:
             self._set_health_error(f"点云解析失败: {exc}")
             return
+        now = time.monotonic()
+        should_publish = False
         with self._lock:
-            self.pointcloud_snapshot = pointcloud_snapshot
-        self._publish("pointcloud", dump_model(pointcloud_snapshot))
+            if primary:
+                self._last_primary_pointcloud_monotonic = now
+                self.pointcloud_snapshot = pointcloud_snapshot
+                should_publish = True
+            else:
+                self._last_fallback_pointcloud_monotonic = now
+                if self._should_use_fallback_pointcloud(now):
+                    self.pointcloud_snapshot = pointcloud_snapshot
+                    should_publish = True
+            if not self.map_snapshot.loaded and pointcloud_snapshot.loaded:
+                self.health.map_received = True
+                self.health.last_map_update = pointcloud_snapshot.stamp
+        if should_publish:
+            self._publish_current_pointcloud_snapshot()
+
+    def _should_use_fallback_pointcloud(self, now: float | None = None) -> bool:
+        del now
+        if self._last_primary_pointcloud_monotonic <= 0.0:
+            return True
+        if not self.pointcloud_snapshot.loaded:
+            return True
+        # The primary 3D map topic is keyframe-driven and may be intentionally
+        # quiet between map updates. Keep showing the latest accumulated map
+        # instead of replacing it with the raw live lidar fallback.
+        return False
+
+    def _publish_current_pointcloud_snapshot(self) -> None:
+        self._publish("pointcloud", dump_model(self.pointcloud_snapshot))
+        self._publish("health", self.get_health_dict())
 
     def _on_localization_pose(self, msg: PoseWithCovarianceStamped) -> None:
         pose = msg.pose.pose
@@ -796,7 +1017,7 @@ class RosBridgeNode(Node):
         with self._lock:
             return deep_copy_model(self.map_snapshot)
 
-    def _pointcloud_snapshot_from_msg(self, msg: PointCloud2) -> PointCloudSnapshot:
+    def _pointcloud_snapshot_from_msg(self, msg: PointCloud2, source_topic: str) -> PointCloudSnapshot:
         x_field = next((field for field in msg.fields if field.name == "x"), None)
         y_field = next((field for field in msg.fields if field.name == "y"), None)
         z_field = next((field for field in msg.fields if field.name == "z"), None)
@@ -809,7 +1030,7 @@ class RosBridgeNode(Node):
         if total_points <= 0:
             return PointCloudSnapshot(
                 loaded=False,
-                source_topic=self.config.ros.pointcloud_topic,
+                source_topic=source_topic,
                 frame_id=msg.header.frame_id or None,
                 stamp=now_iso(),
                 points=[],
@@ -818,7 +1039,7 @@ class RosBridgeNode(Node):
                 sample_stride=1,
             )
 
-        max_points = 5000
+        max_points = max(1000, int(self.config.ros.pointcloud_preview_max_points))
         sample_stride = max(1, int(math.ceil(total_points / max_points)))
         endian = ">" if msg.is_bigendian else "<"
         unpack_float = struct.Struct(f"{endian}f").unpack_from
@@ -837,7 +1058,7 @@ class RosBridgeNode(Node):
             loaded=bool(points),
             frame_id=msg.header.frame_id or None,
             stamp=now_iso(),
-            source_topic=self.config.ros.pointcloud_topic,
+            source_topic=source_topic,
             points=points,
             points_total=total_points,
             points_sampled=len(points),
@@ -992,7 +1213,7 @@ class RosBridgeNode(Node):
                     "pose": dump_model(request.pose),
                     "snapped": False,
                     "attempts": 0,
-                    "message": "3D 定位模式使用外部定位里程计，不需要发送 AMCL 初始位姿",
+                    "message": "当前 3D 建图/导航链以 /odom 为锚定，不需要额外发送 2D 初始位姿",
                 }
             if not self.map_snapshot.loaded:
                 raise RosBridgeError("地图尚未加载完成")

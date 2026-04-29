@@ -1,6 +1,6 @@
 safety_supervisor:
   ros__parameters:
-    lidar_topic: /mid360/points
+    lidar_topic: /jt128/front/points
     robot_state_topic: /robot_state
     map_topic: /map
     map_representation: pointcloud_map_3d

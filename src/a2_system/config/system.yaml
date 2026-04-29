@@ -1,5 +1,5 @@
 system:
-  use_mock: true
+  use_mock: false
   run_all_on_host: true
   target_robot: unitree_a2
   target_lidar: unitree_native_fused

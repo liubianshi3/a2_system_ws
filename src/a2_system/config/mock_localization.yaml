@@ -1,6 +1,0 @@
-mock_localization_publisher:
-  ros__parameters:
-    odom_topic: /odom
-    pose_topic: /amcl_pose
-    xy_variance: 0.02
-    yaw_variance: 0.02

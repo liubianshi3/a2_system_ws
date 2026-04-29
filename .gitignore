@@ -12,6 +12,9 @@ web_console/.venv/
 web_console/backend/static/
 web_console/frontend/node_modules/
 web_console/frontend/dist/
+web_console/frontend/*.tsbuildinfo
+web_console/frontend/vite.config.d.ts
+web_console/frontend/vite.config.js
 
 *.pyc
 __pycache__/

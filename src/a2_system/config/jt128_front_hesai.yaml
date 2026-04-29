@@ -1,0 +1,34 @@
+lidar:
+  - driver:
+      use_gpu: false
+      pcap_play_synchronization: true
+      pcap_path: ""
+      correction_file_path: ""
+      firetimes_path: ""
+      source_type: 1
+      frame_start_azimuth: 0
+      device_ip_address: 192.168.124.20
+      udp_port: 2368
+      is_use_ptc: true
+      ptc_port: 9347
+      multicast_ip_address: ""
+      transform_flag: false
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      roll: 0.0
+      pitch: 0.0
+      yaw: 0.0
+      use_timestamp_type: 0
+      fov_start: -1
+      fov_end: -1
+      distance_correction_flag: false
+    ros:
+      ros_frame_id: jt128_front_link
+      ros_recv_packet_topic: /jt128/front/packets
+      ros_send_packet_topic: /jt128/front/packets
+      ros_send_point_cloud_topic: /jt128/front/points
+      ros_send_imu_topic: /jt128/front/imu
+      send_packet_ros: true
+      send_point_cloud_ros: true
+      send_imu_ros: true

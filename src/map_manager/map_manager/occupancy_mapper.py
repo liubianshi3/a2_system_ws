@@ -19,7 +19,7 @@ class OccupancyMapper(Node):
     def __init__(self):
         super().__init__("occupancy_mapper")
         self.map_topic = self.declare_parameter("map_topic", "/map").value
-        self.pointcloud_topic = self.declare_parameter("pointcloud_topic", "/mid360/points").value
+        self.pointcloud_topic = self.declare_parameter("pointcloud_topic", "/jt128/front/points").value
         self.odom_topic = self.declare_parameter("odom_topic", "/odom").value
         self.frame_id = self.declare_parameter("frame_id", "map").value
         self.width = int(self.declare_parameter("width", 300).value)

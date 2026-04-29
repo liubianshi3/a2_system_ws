@@ -131,7 +131,7 @@ export interface NodeCheck {
 
 export interface SavedMapInfo {
   map_id: string;
-  map_yaml: string;
+  map_yaml: string | null;
   created_at: string | null;
   representation: string | null;
   source_topic: string | null;
@@ -140,6 +140,8 @@ export interface SavedMapInfo {
   width: number | null;
   height: number | null;
   resolution: number | null;
+  navigation_compatible: boolean;
+  navigation_compatibility_reason: string | null;
   artifacts: MapArtifactInfo[];
 }
 
@@ -154,6 +156,88 @@ export interface MapArtifactInfo {
   points_total: number | null;
   points_saved: number | null;
   sample_stride: number | null;
+}
+
+export interface MapMediaEntry {
+  kind: string;
+  path: string;
+  name: string;
+  group: string | null;
+  size_bytes: number | null;
+  artifact_kind: string | null;
+  linked_pointcloud_path: string | null;
+  linked_image_path: string | null;
+  link_source: string | null;
+}
+
+export interface MapMediaListing {
+  map_id: string;
+  entries: MapMediaEntry[];
+}
+
+export interface TaskRouteSummary {
+  route_id: string;
+  route_path: string | null;
+  mission_name: string | null;
+  waypoint_count: number;
+  updated_at: string | null;
+}
+
+export interface TaskRouteDetail extends TaskRouteSummary {
+  route_yaml: string;
+}
+
+export interface TaskRouteStatus {
+  raw: string | null;
+  ready: boolean | null;
+  state: string | null;
+  reason: string | null;
+  current_mode: string | null;
+  active_map: string | null;
+  route_state: string | null;
+  route_id: string | null;
+  route_path: string | null;
+  report_path: string | null;
+  fields: StatusFields;
+}
+
+export interface TaskRouteListing {
+  routes: TaskRouteSummary[];
+  status: TaskRouteStatus;
+}
+
+export interface TaskRouteRunRequestPayload {
+  route_id: string;
+  map_id?: string | null;
+  mission_name?: string | null;
+  dry_run?: boolean;
+  stop_on_failure?: boolean;
+  save_map_on_finish?: boolean;
+  save_map_on_failure?: boolean;
+}
+
+export interface VirtualObstacleZone {
+  obstacle_id: string;
+  label: string | null;
+  kind: string;
+  x: number;
+  y: number;
+  radius: number;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface VirtualObstacleListing {
+  map_id: string;
+  obstacles: VirtualObstacleZone[];
+}
+
+export interface VirtualObstacleUpsertPayload {
+  obstacle_id?: string | null;
+  label?: string | null;
+  x: number;
+  y: number;
+  radius: number;
 }
 
 export interface StackStatus {
@@ -180,6 +264,11 @@ export interface SystemHealth {
   last_pose_update: string | null;
   last_camera_update: string | null;
   last_error: string | null;
+}
+
+export interface InitialPoseRequestPayload {
+  pose: NavigationGoal;
+  map_id?: string | null;
 }
 
 export interface DashboardSnapshot {

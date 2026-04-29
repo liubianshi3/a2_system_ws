@@ -52,13 +52,11 @@ def validate_goal_contract(goal, *, map_frame: str, require_map_frame: bool, max
 class GoalBridge(Node):
     def __init__(self):
         super().__init__("goal_bridge")
-        self.use_mock = bool(self.declare_parameter("use_mock", True).value)
-        self.runtime_mode = self.declare_parameter(
-            "runtime_mode", "mock" if self.use_mock else "real"
-        ).value
+        self.runtime_mode = self.declare_parameter("runtime_mode", "real").value
         self.goal_topic = self.declare_parameter("exploration_goal_topic", "/a2/exploration/goal").value
         self.navigation_backend = self.declare_parameter("navigation_backend", "pose_topic_3d").value
-        self.pose_goal_topic = self.declare_parameter("pose_goal_topic", "/goal_pose_").value
+        self.pose_goal_topic = self.declare_parameter("pose_goal_topic", "/a2/nav3/goal_pose").value
+        self.legacy_pose_goal_topic = self.declare_parameter("legacy_pose_goal_topic", "/goal_pose_").value
         self.action_name = self.declare_parameter("navigate_action_name", "navigate_to_pose").value
         self.goal_timeout_sec = float(self.declare_parameter("goal_timeout_sec", 180.0).value)
         self.action_wait_timeout_sec = float(self.declare_parameter("action_wait_timeout_sec", 0.5).value)
@@ -72,6 +70,11 @@ class GoalBridge(Node):
         )
         self.status_pub = self.create_publisher(String, "/a2/nav2/status", 10)
         self.pose_goal_pub = self.create_publisher(PoseStamped, self.pose_goal_topic, 10)
+        self.legacy_pose_goal_pub = None
+        if self.legacy_pose_goal_topic and self.legacy_pose_goal_topic != self.pose_goal_topic:
+            self.legacy_pose_goal_pub = self.create_publisher(
+                PoseStamped, self.legacy_pose_goal_topic, 10
+            )
         self.action_client = None
         self.navigate_type = None
         self.active_goal_handle = None
@@ -90,15 +93,19 @@ class GoalBridge(Node):
         self.create_timer(0.5, self.watchdog)
 
     def on_goal(self, msg):
-        if self.use_mock:
-            return
         if self.navigation_backend == "pose_topic_3d":
             sanitized_goal, reason = self.sanitize_goal(msg)
             if sanitized_goal is None:
                 self.publish_status(False, "goal_rejected", reason)
                 return
             self.pose_goal_pub.publish(sanitized_goal)
-            self.publish_status(True, "goal_sent", f"{reason};backend=pose_topic_3d;topic={self.pose_goal_topic}")
+            if self.legacy_pose_goal_pub is not None:
+                self.legacy_pose_goal_pub.publish(sanitized_goal)
+            self.publish_status(
+                True,
+                "goal_sent",
+                f"{reason};backend=pose_topic_3d;topic={self.pose_goal_topic}",
+            )
             return
         if self.action_client is None or self.navigate_type is None:
             self.publish_status(False, "bridge_unavailable", "nav2_msgs_missing")

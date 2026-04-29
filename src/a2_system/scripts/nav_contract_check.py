@@ -113,14 +113,14 @@ def check_nav2_stack(result: CheckResult) -> None:
 
 def check_localization(result: CheckResult) -> None:
     params = get(load_yaml(CONFIG_DIR / "localization.yaml"), "localization_gate", "ros__parameters", default={})
-    result.require(params.get("input_pose_topic") == "/odom", "localization_gate must consume /odom in 3D-first mode")
+    result.require(params.get("input_pose_topic") == "/jt128/dlio/odom", "localization_gate must consume /jt128/dlio/odom in JT128 3D-first mode")
     result.require(
         params.get("input_pose_msg_type") == "nav_msgs/msg/Odometry",
         "localization_gate must consume nav_msgs/msg/Odometry in 3D-first mode",
     )
     result.require(
         not bool(params.get("pose_transient_local", True)),
-        "localization_gate must use volatile QoS for /odom in 3D-first mode",
+        "localization_gate must use volatile QoS for JT128 DLIO odom in 3D-first mode",
     )
     result.require(bool(params.get("latch_valid_pose", False)), "localization_gate must latch recently valid poses")
     result.require(float(params.get("max_pose_age_sec", 999.0)) <= 10.0, "max_pose_age_sec must be bounded for real readiness")
@@ -139,15 +139,19 @@ def check_state_bridge(result: CheckResult) -> None:
 
 def check_real_lidar(result: CheckResult) -> None:
     params = get(load_yaml(CONFIG_DIR / "real_lidar.yaml"), "real_lidar", "ros__parameters", default={})
-    result.require(params.get("driver_mode") == "external_pointcloud", "real lidar must consume robot-native pointcloud")
-    result.require(params.get("output_topic") == "/mid360/points", "real lidar output must remain /mid360/points for upper layers")
-    result.warn_if(params.get("input_topic") == params.get("output_topic"), "real lidar input and output topics are identical")
+    result.require(params.get("profile") == "hesai_jt128_front", "real lidar profile must be JT128 front")
+    result.require(params.get("driver_mode") == "dedicated_hesai_ros_driver", "real lidar must use the dedicated Hesai JT128 driver")
+    result.require(params.get("input_topic") == "/jt128/front/points", "real lidar input must be /jt128/front/points")
+    result.require(params.get("output_topic") == "/jt128/front/points", "real lidar output must stay JT128-native")
 
 
 def check_goal_bridge(result: CheckResult) -> None:
     params = get(load_yaml(CONFIG_DIR / "nav2.yaml"), "goal_bridge", "ros__parameters", default={})
     result.require(params.get("navigation_backend") == "pose_topic_3d", "goal_bridge must default to pose_topic_3d")
-    result.require(params.get("pose_goal_topic") == "/goal_pose_", "goal_bridge pose_goal_topic must be /goal_pose_")
+    result.require(
+        params.get("pose_goal_topic") == "/a2/nav3/goal_pose",
+        "goal_bridge pose_goal_topic must be /a2/nav3/goal_pose",
+    )
     result.require(params.get("map_frame") == "map", "goal_bridge map_frame must be map")
     result.require(bool(params.get("require_map_frame", False)), "goal_bridge must reject non-map goals by default")
     result.require(float(params.get("goal_timeout_sec", 0.0)) > 0.0, "goal_bridge must define goal_timeout_sec")
@@ -159,16 +163,18 @@ def check_scan_mission(result: CheckResult) -> None:
     waypoint_yaml = load_yaml(CONFIG_DIR / "scan_waypoints.example.yaml")
     waypoints = waypoint_yaml.get("waypoints", [])
     scan_launch = (BRINGUP_DIR / "scan_mission.launch.py").read_text(encoding="utf-8")
-    mock_launch = (BRINGUP_DIR / "scan_mission_mock.launch.py").read_text(encoding="utf-8")
 
     result.require(params.get("navigation_backend") == "pose_topic_3d", "scan mission must default to pose_topic_3d")
-    result.require(params.get("pose_goal_topic") == "/goal_pose_", "scan mission pose goal topic must be /goal_pose_")
-    result.require(params.get("pose_topic") == "/odom", "scan mission must consume /odom pose in 3D-first mode")
+    result.require(
+        params.get("pose_goal_topic") == "/a2/nav3/goal_pose",
+        "scan mission pose goal topic must be /a2/nav3/goal_pose",
+    )
+    result.require(params.get("pose_topic") == "/jt128/dlio/odom", "scan mission must consume /jt128/dlio/odom pose in JT128 3D-first mode")
     result.require(
         params.get("pose_msg_type") == "nav_msgs/msg/Odometry",
         "scan mission pose_msg_type must be nav_msgs/msg/Odometry in 3D-first mode",
     )
-    result.require(params.get("pointcloud_topic") == "/unitree/slam_lidar/points1", "scan mission must use front lidar pointcloud")
+    result.require(params.get("pointcloud_topic") == "/jt128/front/points", "scan mission must use JT128 front pointcloud")
     result.require(params.get("navigate_action_name") == "/navigate_to_pose", "scan mission must keep Nav2 action as fallback")
     result.require(params.get("mission_status_topic") == "/a2/scan_mission/status", "scan mission status topic must be stable")
     result.require(params.get("mission_report_topic") == "/a2/scan_mission/report", "scan mission report topic must be stable")
@@ -200,8 +206,6 @@ def check_scan_mission(result: CheckResult) -> None:
             result.require("x" in item and "y" in item, f"scan waypoint #{index} must contain x and y")
             result.require("yaw" in item, f"scan waypoint #{index} must contain yaw")
     result.require("auto_scan_mission.py" in scan_launch, "scan mission launch must start auto_scan_mission.py")
-    result.require("mock_scan_mission_harness.py" in mock_launch, "scan mission mock launch must start mock harness")
-    result.require("result_mode" in mock_launch, "scan mission mock launch must expose result_mode")
 
 
 def check_launch_defaults(result: CheckResult) -> None:
@@ -210,20 +214,16 @@ def check_launch_defaults(result: CheckResult) -> None:
         "nav2.launch.py",
         "localization.launch.py",
         "scan_mission.launch.py",
-        "scan_mission_mock.launch.py",
     ):
         text = (BRINGUP_DIR / name).read_text(encoding="utf-8")
-        if name not in {"scan_mission.launch.py", "scan_mission_mock.launch.py"}:
+        if name != "scan_mission.launch.py":
             result.require(
                 'DeclareLaunchArgument("real_localization_mode", default_value="amcl")' in text,
                 f"{name} must default real_localization_mode to amcl",
             )
-        elif name == "scan_mission.launch.py":
+        else:
             result.require("waypoints_file" in text, "scan_mission.launch.py must expose a waypoints_file argument")
             result.require("dry_run" in text, "scan_mission.launch.py must expose a dry_run argument")
-        else:
-            result.require("result_mode" in text, "scan_mission_mock.launch.py must expose result_mode")
-            result.require("dry_run" in text, "scan_mission_mock.launch.py must expose dry_run")
 
 
 def check_real_entrypoints(result: CheckResult) -> None:

@@ -2,7 +2,7 @@
 <package format="3">
   <name>safety_manager</name>
   <version>0.1.0</version>
-  <description>Host-side safety supervisor for A2, MID360, localization, and map gating.</description>
+  <description>Host-side safety supervisor for A2 front-lidar, localization, and map gating.</description>
 
   <maintainer email="dell@example.com">dell</maintainer>
   <license>Apache-2.0</license>

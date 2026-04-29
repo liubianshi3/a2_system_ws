@@ -1,6 +1,6 @@
 a2_control_bridge:
   ros__parameters:
-    use_mock: true
+    use_mock: false
     auto_detect_interface: true
     allow_loopback: true
     network_interface: ""

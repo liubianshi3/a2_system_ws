@@ -19,6 +19,9 @@ setup(
     entry_points={
         "console_scripts": [
             "sync_monitor = sensor_sync.sync_monitor:main",
+            "pointcloud_guard = sensor_sync.pointcloud_guard:main",
+            "pointcloud_relay = sensor_sync.pointcloud_relay:main",
+            "pointcloud_to_laserscan = sensor_sync.pointcloud_to_laserscan:main",
         ],
     },
 )

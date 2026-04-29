@@ -91,7 +91,7 @@ class AutoScanMission(Node):
         self.pose_topic = self.declare_parameter("pose_topic", "/odom").value
         self.pose_msg_type = self.declare_parameter("pose_msg_type", "nav_msgs/msg/Odometry").value
         self.odom_topic = self.declare_parameter("odom_topic", "/odom").value
-        self.pointcloud_topic = self.declare_parameter("pointcloud_topic", "/unitree/slam_lidar/points1").value
+        self.pointcloud_topic = self.declare_parameter("pointcloud_topic", "/jt128/front/points").value
         self.localization_ok_topic = self.declare_parameter("localization_ok_topic", "/a2/localization_ok").value
         self.localization_status_topic = self.declare_parameter(
             "localization_status_topic", "/a2/localization/status"
@@ -117,7 +117,7 @@ class AutoScanMission(Node):
         self.occupied_threshold = int(self.declare_parameter("occupied_threshold", 65).value)
         self.min_clearance_cells = int(self.declare_parameter("min_clearance_cells", 0).value)
         self.navigation_backend = self.declare_parameter("navigation_backend", "pose_topic_3d").value
-        self.pose_goal_topic = self.declare_parameter("pose_goal_topic", "/goal_pose_").value
+        self.pose_goal_topic = self.declare_parameter("pose_goal_topic", "/a2/nav3/goal_pose").value
         self.navigate_action_name = self.declare_parameter("navigate_action_name", "/navigate_to_pose").value
         self.manage_map_service = self.declare_parameter("manage_map_service", "/map_manager/manage_map").value
         self.set_mode_service = self.declare_parameter("set_mode_service", "/map_manager/set_mode").value

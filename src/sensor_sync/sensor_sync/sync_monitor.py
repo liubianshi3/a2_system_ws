@@ -11,22 +11,15 @@ from std_msgs.msg import Bool, String
 class SyncMonitor(Node):
     def __init__(self):
         super().__init__("sync_monitor")
-        self.use_mock = bool(self.declare_parameter("use_mock", True).value)
-        self.runtime_mode = self.declare_parameter(
-            "runtime_mode", "mock" if self.use_mock else "real"
-        ).value
+        self.runtime_mode = self.declare_parameter("runtime_mode", "real").value
         imu_topic = self.declare_parameter("imu_topic", "/imu/data").value
-        pointcloud_topic = self.declare_parameter("pointcloud_topic", "/mid360/points").value
+        pointcloud_topic = self.declare_parameter("pointcloud_topic", "/jt128/front/points").value
         self.status_report_topic = self.declare_parameter(
             "status_report_topic", "/a2/sensor_sync/status"
         ).value
         self.max_age_sec = float(self.declare_parameter("max_age_sec", 0.25).value)
         self.warn_skew_sec = float(self.declare_parameter("warn_skew_sec", 0.05).value)
         self.history_size = int(self.declare_parameter("history_size", 256).value)
-        self.ignore_skew_in_mock = bool(self.declare_parameter("ignore_skew_in_mock", True).value)
-        self.ignore_skew_in_simulated = bool(
-            self.declare_parameter("ignore_skew_in_simulated", self.ignore_skew_in_mock).value
-        )
 
         self.last_imu_stamp = None
         self.last_cloud_stamp = None
@@ -68,12 +61,7 @@ class SyncMonitor(Node):
         skew = 0.0
         if self.last_imu_stamp is not None and self.last_cloud_stamp is not None:
             skew = self.compute_nearest_pair_skew()
-            if self.runtime_mode == "mock" and self.ignore_skew_in_mock:
-                skew_ok = True
-            elif self.runtime_mode != "real" and self.ignore_skew_in_simulated:
-                skew_ok = True
-            else:
-                skew_ok = skew <= self.warn_skew_sec
+            skew_ok = skew <= self.warn_skew_sec
             if not skew_ok:
                 self.get_logger().warn(f"IMU / point cloud skew too large: {skew:.3f}s")
         ready = imu_ok and cloud_ok and skew_ok

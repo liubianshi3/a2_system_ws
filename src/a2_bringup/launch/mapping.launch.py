@@ -23,8 +23,6 @@ def _real_mapping_source(a2_system_share, runtime_mode):
 
 def _launch_setup(context, *args, **kwargs):
     del args, kwargs
-    use_mock = LaunchConfiguration("use_mock")
-    runtime_mode = LaunchConfiguration("runtime_mode")
     use_sim_time = LaunchConfiguration("use_sim_time")
     pointcloud_topic = LaunchConfiguration("pointcloud_topic")
     runtime_mode_value = LaunchConfiguration("runtime_mode").perform(context)
@@ -35,11 +33,21 @@ def _launch_setup(context, *args, **kwargs):
 
     if not enable_nav2_bringup:
         if mapping_source == "front_lidar_pointcloud_3d":
-            pass
+            actions.append(
+                Node(
+                    package="map_manager",
+                    executable="pointcloud_accumulator",
+                    name="pointcloud_accumulator",
+                    parameters=[f"{a2_system_share}/config/pointcloud_accumulator.yaml", {
+                        "pointcloud_topic": pointcloud_topic,
+                        "use_sim_time": use_sim_time,
+                    }],
+                )
+            )
         elif mapping_source == "slam_toolbox":
             actions.extend([
                 Node(
-                    package="mid360_wrapper",
+                    package="sensor_sync",
                     executable="pointcloud_to_laserscan",
                     name="pointcloud_to_laserscan",
                     parameters=[f"{a2_system_share}/config/pointcloud_to_scan.yaml", {
@@ -75,8 +83,7 @@ def _launch_setup(context, *args, **kwargs):
                     name="occupancy_mapper",
                     parameters=[f"{a2_system_share}/config/occupancy_mapper.yaml", {
                         "pointcloud_topic": pointcloud_topic,
-                        "use_mock": use_mock,
-                        "runtime_mode": runtime_mode,
+                        "runtime_mode": "real",
                         "use_sim_time": use_sim_time,
                     }],
                 )
@@ -88,8 +95,7 @@ def _launch_setup(context, *args, **kwargs):
             executable="map_manager_node",
             name="map_manager",
             parameters=[f"{a2_system_share}/config/map_manager.yaml", {
-                "use_mock": use_mock,
-                "runtime_mode": runtime_mode,
+                "runtime_mode": "real",
                 "map_transient_local": enable_nav2_bringup,
                 "use_sim_time": use_sim_time,
             }],
@@ -101,9 +107,8 @@ def _launch_setup(context, *args, **kwargs):
 def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument("runtime_mode", default_value=""),
-        DeclareLaunchArgument("use_mock", default_value="true"),
         DeclareLaunchArgument("use_sim_time", default_value="false"),
         DeclareLaunchArgument("enable_nav2_bringup", default_value="false"),
-        DeclareLaunchArgument("pointcloud_topic", default_value="/mid360/points"),
+        DeclareLaunchArgument("pointcloud_topic", default_value="/jt128/front/points"),
         OpaqueFunction(function=_launch_setup),
     ])

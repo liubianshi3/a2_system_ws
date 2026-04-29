@@ -47,10 +47,7 @@ def evaluate_localization_contract(
 class LocalizationGate(Node):
     def __init__(self):
         super().__init__("localization_gate")
-        self.use_mock = bool(self.declare_parameter("use_mock", True).value)
-        self.runtime_mode = self.declare_parameter(
-            "runtime_mode", "mock" if self.use_mock else "real"
-        ).value
+        self.runtime_mode = self.declare_parameter("runtime_mode", "real").value
         pose_topic = self.declare_parameter("input_pose_topic", "/amcl_pose").value
         self.input_pose_msg_type = self.declare_parameter(
             "input_pose_msg_type", "geometry_msgs/msg/PoseWithCovarianceStamped"
@@ -71,6 +68,8 @@ class LocalizationGate(Node):
         self.last_pose = None
         self.last_valid_pose_time = None
         self.last_status_text = ""
+        self.last_logged_state = ""
+        self.last_log_time = self.get_clock().now()
 
         self.status_pub = self.create_publisher(Bool, self.status_topic, 10)
         self.status_report_pub = self.create_publisher(String, self.status_report_topic, 10)
@@ -133,9 +132,14 @@ class LocalizationGate(Node):
         mode = self.runtime_mode
         status = f"mode={mode};state={state};ready={str(bool(ready)).lower()};reason={reason}"
         self.status_report_pub.publish(String(data=status))
-        if status != self.last_status_text:
+        now = self.get_clock().now()
+        log_age = (now - self.last_log_time).nanoseconds * 1e-9
+        should_log = state != self.last_logged_state or log_age >= 5.0
+        if should_log:
             self.get_logger().info(f"Localization status changed: {status}")
-            self.last_status_text = status
+            self.last_logged_state = state
+            self.last_log_time = now
+        self.last_status_text = status
 
 
 def main():

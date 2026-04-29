@@ -20,11 +20,15 @@ class ServerConfig:
 @dataclass
 class RosTopicConfig:
     map_topic: str = "/map"
-    pointcloud_topic: str = "/unitree/slam_lidar/points1"
+    pointcloud_topic: str = "/jt128/dlio/map_points"
+    pointcloud_fallback_topic: str = "/jt128/front/points"
+    pointcloud_primary_stale_sec: float = 2.0
+    pointcloud_preview_max_points: int = 20000
     manage_map_service: str = "/map_manager/manage_map"
-    localization_pose_topic: str = "/odom"
+    task_manager_service: str = "/a2/task_manager/command"
+    localization_pose_topic: str = "/jt128/dlio/odom"
     localization_pose_msg_type: str = "nav_msgs/msg/Odometry"
-    odom_topic: str = "/odom"
+    odom_topic: str = "/jt128/dlio/odom"
     tf_topic: str = "/tf"
     tf_static_topic: str = "/tf_static"
     real_report_topic: str = "/a2/real/report"
@@ -96,10 +100,10 @@ class NativeSlamConfig:
 @dataclass
 class StackConfig:
     workspace: str = "~/a2_system_ws"
-    network_interface: str = "eth0"
+    network_interface: str = "net1"
     map_root: str = "~/a2_system_ws/runtime/maps"
-    start_script: str = "~/a2_system_ws/install/a2_system/share/a2_system/start_real_stack.sh"
-    stop_script: str = "~/a2_system_ws/install/a2_system/share/a2_system/stop_stack.sh"
+    start_script: str = "~/a2_system_ws/src/a2_system/tools/start_jt128_3d_stack.sh"
+    stop_script: str = "~/a2_system_ws/src/a2_system/tools/stop_jt128_stack.sh"
     command_timeout_sec: float = 15.0
 
 

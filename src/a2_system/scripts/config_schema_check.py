@@ -149,7 +149,7 @@ def audit_localization(result: AuditResult, config_dir: Path) -> None:
             "pose_transient_local",
         ],
     )
-    result.require(params.get("input_pose_topic") == "/odom", "localization_gate input must be /odom in 3D-first mode")
+    result.require(params.get("input_pose_topic") == "/jt128/dlio/odom", "localization_gate input must be /jt128/dlio/odom in JT128 3D-first mode")
     result.require(
         params.get("input_pose_msg_type") == "nav_msgs/msg/Odometry",
         "localization_gate input_pose_msg_type must be nav_msgs/msg/Odometry",
@@ -157,7 +157,7 @@ def audit_localization(result: AuditResult, config_dir: Path) -> None:
     result.require(params.get("status_topic") == "/a2/localization_ok", "localization status topic mismatch")
     result.require(
         not bool(params.get("pose_transient_local", True)),
-        "localization_gate must use volatile QoS for /odom in 3D-first mode",
+        "localization_gate must use volatile QoS for JT128 DLIO odom in 3D-first mode",
     )
     result.require(float(params.get("max_pose_age_sec", 999.0)) <= 10.0, "localization max_pose_age_sec too loose")
     result.require(float(params.get("max_xy_variance", 999.0)) <= 0.20, "localization max_xy_variance too loose")

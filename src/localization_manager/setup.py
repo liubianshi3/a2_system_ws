@@ -20,7 +20,7 @@ setup(
         "console_scripts": [
             "localization_gate = localization_manager.localization_gate:main",
             "manual_localization_publisher = localization_manager.manual_localization_publisher:main",
-            "mock_localization_publisher = localization_manager.mock_localization_publisher:main",
+            "pcd_relocalizer_3d = localization_manager.pcd_relocalizer_3d:main",
         ],
     },
 )

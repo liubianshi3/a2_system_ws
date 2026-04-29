@@ -1,8 +1,0 @@
-mock_nav_controller:
-  ros__parameters:
-    goal_topic: /a2/exploration/goal
-    odom_topic: /odom
-    cmd_topic: /cmd_vel
-    goal_tolerance: 0.2
-    max_linear: 0.2
-    max_yaw: 0.45
