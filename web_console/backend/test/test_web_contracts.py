@@ -38,7 +38,9 @@ def test_default_config_exposes_camera_topics():
     assert config.ros.pointcloud_topic == "/jt128/dlio/map_points"
     assert config.ros.pointcloud_fallback_topic == "/jt128/front/points"
     assert config.ros.task_manager_service == "/a2/task_manager/command"
-    assert config.ros.localization_pose_topic == "/jt128/dlio/odom"
+    assert config.ros.localization_pose_topic == "/a2/relocalization/pose"
+    assert config.ros.localization_pose_msg_type == "geometry_msgs/msg/PoseWithCovarianceStamped"
+    assert config.ros.pose_goal_status_topic == "/a2/nav3/status"
     assert config.ros.pointcloud_primary_stale_sec > 0.0
     assert config.ros.pointcloud_preview_max_points >= 20000
     assert config.stack.start_script.endswith("start_jt128_3d_stack.sh")

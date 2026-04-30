@@ -162,7 +162,8 @@ def create_app(config_path: str | None = None) -> FastAPI:
         node = ros_runtime.node
         if node is None:
             raise HTTPException(status_code=503, detail="ROS runtime 未启动")
-        return node.build_snapshot()
+        ros_thread_alive = bool(ros_runtime.thread and ros_runtime.thread.is_alive())
+        return node.build_snapshot(ros_thread_alive=ros_thread_alive)
 
     @app.post("/api/navigation/goal")
     async def send_goal(request: NavigationGoalRequest):
@@ -466,7 +467,8 @@ def create_app(config_path: str | None = None) -> FastAPI:
         try:
             node = ros_runtime.node
             if node is not None:
-                snapshot = node.build_snapshot()
+                ros_thread_alive = bool(ros_runtime.thread and ros_runtime.thread.is_alive())
+                snapshot = node.build_snapshot(ros_thread_alive=ros_thread_alive)
                 await websocket.send_json({"type": "snapshot", "payload": jsonable_encoder(snapshot)})
             while True:
                 await websocket.receive_text()

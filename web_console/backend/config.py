@@ -26,8 +26,8 @@ class RosTopicConfig:
     pointcloud_preview_max_points: int = 20000
     manage_map_service: str = "/map_manager/manage_map"
     task_manager_service: str = "/a2/task_manager/command"
-    localization_pose_topic: str = "/jt128/dlio/odom"
-    localization_pose_msg_type: str = "nav_msgs/msg/Odometry"
+    localization_pose_topic: str = "/a2/relocalization/pose"
+    localization_pose_msg_type: str = "geometry_msgs/msg/PoseWithCovarianceStamped"
     odom_topic: str = "/jt128/dlio/odom"
     tf_topic: str = "/tf"
     tf_static_topic: str = "/tf_static"
@@ -38,6 +38,7 @@ class RosTopicConfig:
     map_manager_status_topic: str = "/a2/map_manager/status"
     map_manager_active_map_topic: str = "/a2/map_manager/active_map"
     task_manager_status_topic: str = "/a2/task_manager/status"
+    pose_goal_status_topic: str = "/a2/nav3/status"
     sdk_status_topic: str = "/a2/sdk/status"
     raw_state_topic: str = "/a2/raw_state"
     camera_image_topic: str = "/camera/image_raw"

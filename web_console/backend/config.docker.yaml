@@ -13,8 +13,8 @@ ros:
   pointcloud_primary_stale_sec: 2.0
   pointcloud_preview_max_points: 20000
   task_manager_service: /a2/task_manager/command
-  localization_pose_topic: /jt128/dlio/odom
-  localization_pose_msg_type: nav_msgs/msg/Odometry
+  localization_pose_topic: /a2/relocalization/pose
+  localization_pose_msg_type: geometry_msgs/msg/PoseWithCovarianceStamped
   odom_topic: /jt128/dlio/odom
   tf_topic: /tf
   tf_static_topic: /tf_static
@@ -25,6 +25,7 @@ ros:
   map_manager_status_topic: /a2/map_manager/status
   map_manager_active_map_topic: /a2/map_manager/active_map
   task_manager_status_topic: /a2/task_manager/status
+  pose_goal_status_topic: /a2/nav3/status
   sdk_status_topic: /a2/sdk/status
   raw_state_topic: /a2/raw_state
 

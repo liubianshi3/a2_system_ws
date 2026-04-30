@@ -36,7 +36,7 @@ pcd_relocalizer_3d:
     min_correspondences: 120
     max_correspondence_distance: 0.8
     max_iterations: 4
-    max_translation_correction: 0.25
+    max_translation_correction: 1.2
     max_rotation_correction_deg: 5.0
     max_map_to_odom_translation: 20.0
     max_base_distance_from_origin: 120.0

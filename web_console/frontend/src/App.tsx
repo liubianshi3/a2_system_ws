@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
-import type { ReactNode } from "react";
+import type { Dispatch, ReactNode, SetStateAction } from "react";
 
 import {
   cancelNavigationGoal,
@@ -48,6 +48,7 @@ import type {
   BackendEvent,
   DashboardSnapshot,
   NavigationGoal,
+  NavigationTaskState,
   SavedMapInfo,
   StackStatus,
   TaskRouteStatus,
@@ -175,6 +176,39 @@ function appendGoalToRouteYaml(currentYaml: string, routeId: string, goal: Navig
   return `${trimmed}\n${snippet}\n`;
 }
 
+function mapsSignature(items: SavedMapInfo[]): string {
+  return items
+    .map((map) => {
+      const artifactSignature = map.artifacts
+        .map((artifact) =>
+          [
+            artifact.kind,
+            artifact.path,
+            artifact.frame_id ?? "",
+            artifact.points_total ?? "",
+            artifact.points_saved ?? "",
+            artifact.stamp_sec ?? "",
+            artifact.stamp_nanosec ?? "",
+          ].join(":"),
+        )
+        .join("|");
+      return [
+        map.map_id,
+        map.created_at ?? "",
+        map.representation ?? "",
+        map.pointcloud_topic_3d ?? "",
+        String(map.has_pointcloud_3d),
+        String(map.navigation_compatible),
+        artifactSignature,
+      ].join("#");
+    })
+    .join("\n");
+}
+
+function setMapsIfChanged(setMaps: Dispatch<SetStateAction<SavedMapInfo[]>>, nextMaps: SavedMapInfo[]) {
+  setMaps((currentMaps) => (mapsSignature(currentMaps) === mapsSignature(nextMaps) ? currentMaps : nextMaps));
+}
+
 export default function App() {
   const [snapshot, setSnapshot] = useState<DashboardSnapshot>(createEmptySnapshot());
   const [selectedGoal, setSelectedGoal] = useState<NavigationGoal | null>(null);
@@ -238,7 +272,7 @@ export default function App() {
           return;
         }
         setStack(status);
-        setMaps(status.maps);
+        setMapsIfChanged(setMaps, status.maps);
         if (!selectedMapId && status.selected_map_id) {
           setSelectedMapId(status.selected_map_id);
         }
@@ -250,7 +284,7 @@ export default function App() {
         if (cancelled) {
           return;
         }
-        setMaps(items);
+        setMapsIfChanged(setMaps, items);
       })
       .catch(() => undefined);
 
@@ -277,7 +311,7 @@ export default function App() {
       fetchStackStatus()
         .then((status) => {
           setStack(status);
-          setMaps(status.maps);
+          setMapsIfChanged(setMaps, status.maps);
           if (!selectedMapId && status.selected_map_id) {
             setSelectedMapId(status.selected_map_id);
           }
@@ -286,6 +320,17 @@ export default function App() {
     }, 2500);
     return () => window.clearInterval(interval);
   }, [selectedMapId, stackBusy]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      fetchHealth()
+        .then((health) => {
+          setSnapshot((current) => ({ ...current, health }));
+        })
+        .catch(() => undefined);
+    }, 2500);
+    return () => window.clearInterval(interval);
+  }, []);
 
   const refreshRoutes = async () => {
     const payload = await fetchTaskRoutes();
@@ -418,23 +463,33 @@ export default function App() {
     }
   }, [websocketError]);
 
-  const poseAgeMs = snapshot.pose.stamp ? Date.now() - Date.parse(snapshot.pose.stamp) : Number.POSITIVE_INFINITY;
   const selectedMap = maps.find((map) => map.map_id === selectedMapId) ?? null;
   const has3DViewerData = snapshot.pointcloud.loaded || Boolean(selectedMap?.has_pointcloud_3d);
   const navigationUses3D = snapshot.navigation.backend === "pose_topic_3d" || has3DViewerData;
   const localizationReason =
     snapshot.status.localization_status.reason ?? snapshot.status.localization_status.state ?? null;
-  const poseFresh = poseAgeMs < 10000;
+  const rosRuntimeHealthy = snapshot.health.ros_thread_alive && snapshot.health.ros_connected;
+  const poseFresh = snapshot.pose.available && !snapshot.pose.stale && rosRuntimeHealthy;
+  const localizationReady = rosRuntimeHealthy && snapshot.status.localization_ok === true;
+  const systemReady = rosRuntimeHealthy && snapshot.status.system_ready === true;
+  const navigationMessage =
+    snapshot.navigation.state === "idle" && snapshot.navigation.goal === null
+      ? "当前没有活动导航目标，控制器空闲"
+      : snapshot.navigation.message;
+  const displayNavigation = useMemo<NavigationTaskState>(
+    () => ({ ...snapshot.navigation, message: navigationMessage }),
+    [navigationMessage, snapshot.navigation],
+  );
   const canSendGoal =
     stack?.mode === "navigation" &&
-    snapshot.status.localization_ok === true &&
+    localizationReady &&
     snapshot.health.action_server_ready &&
     poseFresh &&
     (navigationUses3D ? snapshot.pose.available : snapshot.map.loaded);
   const canSetInitialPose =
+    rosRuntimeHealthy &&
     stack?.mode === "navigation" &&
-    !navigationUses3D &&
-    snapshot.map.loaded &&
+    (navigationUses3D ? selectedMap !== null || has3DViewerData : snapshot.map.loaded) &&
     snapshot.navigation.state !== "navigating";
   const stackTransitioning = stackBusy || stack?.mode === "starting" || stack?.mode === "stopping";
   const startMappingReason =
@@ -462,11 +517,13 @@ export default function App() {
   const setInitialPoseReason =
     !selectedGoal
       ? "请先在 2D 或 3D 视图里选一个点"
+      : !rosRuntimeHealthy
+        ? "后端 ROS 线程未运行，页面状态已过期"
       : stack?.mode !== "navigation"
         ? "当前不在导航模式，不能设置初始位姿"
-        : navigationUses3D
-          ? "当前 3D 导航链以 /odom 为锚定，不需要额外发送 2D 初始位姿"
-          : !snapshot.map.loaded
+        : navigationUses3D && !selectedMap && !has3DViewerData
+          ? "3D 地图尚未加载，不能发送重定位初始位姿"
+          : !navigationUses3D && !snapshot.map.loaded
             ? "2D 地图尚未加载，不能发送初始位姿"
             : snapshot.navigation.state === "navigating"
               ? "导航进行中，不能重设初始位姿"
@@ -474,14 +531,16 @@ export default function App() {
   const sendGoalReason =
     !selectedGoal
       ? "请先在 2D 或 3D 视图里选一个目标点"
+      : !rosRuntimeHealthy
+        ? "后端 ROS 线程未运行，页面状态已过期"
       : stack?.mode !== "navigation"
         ? "当前不在导航模式，不能发送导航目标"
-        : snapshot.status.localization_ok !== true
+        : !localizationReady
           ? `定位未就绪${localizationReason ? `: ${localizationReason}` : ""}`
           : !snapshot.health.action_server_ready
             ? "导航后端未就绪"
             : !poseFresh
-              ? "机器人当前位姿超过 10 秒未刷新"
+              ? "机器人当前位姿未刷新或已过期"
               : navigationUses3D && !snapshot.pose.available
                 ? "当前 3D 位姿不可用"
                 : !navigationUses3D && !snapshot.map.loaded
@@ -501,7 +560,7 @@ export default function App() {
   const refreshStack = async () => {
     const [status, health] = await Promise.all([fetchStackStatus(), fetchHealth().catch(() => null)]);
     setStack(status);
-    setMaps(status.maps);
+    setMapsIfChanged(setMaps, status.maps);
     if (health) {
       setSnapshot((current) => ({ ...current, health }));
     }
@@ -513,7 +572,7 @@ export default function App() {
     try {
       const status = await action();
       setStack(status);
-      setMaps(status.maps);
+      setMapsIfChanged(setMaps, status.maps);
       setLastSuccess(successMessage);
       setLastError(null);
       await refreshStack();
@@ -554,7 +613,7 @@ export default function App() {
     setStackBusy(true);
     try {
       const result = await saveCurrentMap(saveMapId);
-      setMaps(result.maps);
+      setMapsIfChanged(setMaps, result.maps);
       setSelectedMapId(result.map.map_id);
       setLastSuccess(`地图已保存：${result.map.map_id}`);
       setLastError(null);
@@ -842,11 +901,11 @@ export default function App() {
             >
               3D 点云
             </button>
-            <span className={`indicator ${snapshot.status.system_ready ? "indicator-ok" : "indicator-warn"}`}>
-              ready={String(snapshot.status.system_ready)}
+            <span className={`indicator ${systemReady ? "indicator-ok" : "indicator-warn"}`}>
+              ready={String(systemReady)}
             </span>
-            <span className={`indicator ${snapshot.status.localization_ok ? "indicator-ok" : "indicator-warn"}`}>
-              localization={String(snapshot.status.localization_ok)}
+            <span className={`indicator ${localizationReady ? "indicator-ok" : "indicator-warn"}`}>
+              localization={String(localizationReady)}
             </span>
             <TaskStateChip state={stack?.mode ?? "stopped"} />
           </div>
@@ -920,7 +979,7 @@ export default function App() {
               onRunRoute={handleRunRoute}
               onStopRoute={handleStopRoute}
             />
-            <NavigationTaskSection navigation={snapshot.navigation} />
+            <NavigationTaskSection navigation={displayNavigation} />
             <RecentNoticeSection stack={stack} lastError={lastError} lastSuccess={lastSuccess} />
           </DrawerPanel>
 
@@ -1059,7 +1118,7 @@ export default function App() {
           <div className="scene-bottom-strip">
             <span>{snapshot.status.lidar_status.reason ? `lidar: ${snapshot.status.lidar_status.reason}` : "lidar 状态待更新"}</span>
             <span>{snapshot.status.localization_status.reason ? `localization: ${snapshot.status.localization_status.reason}` : "localization 状态待更新"}</span>
-            <span>{snapshot.navigation.message ?? "等待导航任务"}</span>
+            <span>{navigationMessage ?? "等待导航任务"}</span>
             <span>{stack?.log_file ? `log: ${stack.log_file}` : "尚未生成运行日志"}</span>
           </div>
         </div>

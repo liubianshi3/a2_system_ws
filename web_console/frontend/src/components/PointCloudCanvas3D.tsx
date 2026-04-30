@@ -34,6 +34,8 @@ interface SceneContext {
   liveCount: number;
   activeBounds: THREE.Box3 | null;
   preset: ViewPreset;
+  savedAssetKey: string | null;
+  hasAutoFramed: boolean;
   animationFrame: number | null;
 }
 
@@ -43,8 +45,12 @@ const SAVED_POINT_COLOR = new THREE.Color("#8ce7ff");
 const LIVE_POINT_COLOR = new THREE.Color("#f97316");
 const SELECTED_GOAL_COLOR = new THREE.Color("#f59e0b");
 const ACTIVE_GOAL_COLOR = new THREE.Color("#22c55e");
-const ROBOT_BODY_COLOR = new THREE.Color("#2563eb");
-const ROBOT_HEADING_COLOR = new THREE.Color("#fb7185");
+const ROBOT_BODY_COLOR = new THREE.Color("#facc15");
+const ROBOT_OUTLINE_COLOR = new THREE.Color("#111827");
+const ROBOT_HEADING_COLOR = new THREE.Color("#ef4444");
+const GROUND_SEARCH_RADIUS_M = 0.85;
+const GROUND_HEIGHT_QUANTILE = 0.12;
+const GROUND_PICK_RADIUS_PX = 24;
 
 export function PointCloudCanvas3D({
   pointcloud,
@@ -58,6 +64,10 @@ export function PointCloudCanvas3D({
 }: PointCloudCanvas3DProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const sceneRef = useRef<SceneContext | null>(null);
+  const showSavedMapRef = useRef(true);
+  const poseFrameRef = useRef<string | null>(null);
+  const pointcloudFrameRef = useRef<string | null>(null);
+  const onSelectGoalRef = useRef(onSelectGoal);
   const [artifactState, setArtifactState] = useState("等待 3D 资产");
   const [showSavedMap, setShowSavedMap] = useState(true);
   const [showLiveOverlay, setShowLiveOverlay] = useState(false);
@@ -76,6 +86,8 @@ export function PointCloudCanvas3D({
     () => selectedPointcloudPath ?? selectedSnapshotArtifact?.path ?? selectedNativeArtifact?.path ?? null,
     [selectedNativeArtifact, selectedPointcloudPath, selectedSnapshotArtifact],
   );
+  const selectedMapId = selectedMap?.map_id ?? null;
+  const savedAssetKey = selectedMapId && activeSavedPointcloudPath ? `${selectedMapId}:${activeSavedPointcloudPath}` : null;
   const livePointCount = pointcloud?.loaded ? pointcloud.points.length : 0;
   const hasSavedMap = renderStats.saved > 0;
   const sourceLabel = hasSavedMap ? activeSavedPointcloudPath ?? "saved pointcloud_map_3d" : pointcloud?.source_topic ?? "none";
@@ -88,6 +100,18 @@ export function PointCloudCanvas3D({
     : livePointCount > 0
       ? "实时点云主视图"
       : "暂无实时点云";
+
+  useEffect(() => {
+    poseFrameRef.current = pose?.frame_id ?? null;
+  }, [pose?.frame_id]);
+
+  useEffect(() => {
+    pointcloudFrameRef.current = pointcloud?.frame_id ?? null;
+  }, [pointcloud?.frame_id]);
+
+  useEffect(() => {
+    onSelectGoalRef.current = onSelectGoal;
+  }, [onSelectGoal]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -114,6 +138,14 @@ export function PointCloudCanvas3D({
     controls.rotateSpeed = 0.55;
     controls.zoomSpeed = 0.9;
     controls.panSpeed = 0.75;
+    controls.zoomToCursor = true;
+    controls.minDistance = 0.25;
+    controls.maxDistance = 800;
+    controls.mouseButtons = {
+      LEFT: THREE.MOUSE.ROTATE,
+      MIDDLE: THREE.MOUSE.PAN,
+      RIGHT: THREE.MOUSE.PAN,
+    };
     controls.target.set(0, 0.6, 0);
 
     const ambient = new THREE.HemisphereLight(0xdbeafe, 0x1e293b, 1.05);
@@ -145,6 +177,8 @@ export function PointCloudCanvas3D({
       liveCount: 0,
       activeBounds: null,
       preset: "iso",
+      savedAssetKey: null,
+      hasAutoFramed: false,
       animationFrame: null,
     };
     sceneRef.current = context;
@@ -178,19 +212,27 @@ export function PointCloudCanvas3D({
         ((event.clientX - rect.left) / rect.width) * 2 - 1,
         -((event.clientY - rect.top) / rect.height) * 2 + 1,
       );
-      raycaster.setFromCamera(mouse, current.camera);
-      const targets = [current.savedPoints, current.livePoints].filter((item): item is THREE.Points => Boolean(item));
-      const intersections = raycaster.intersectObjects(targets, false);
-      const hit = intersections.find((item: THREE.Intersection<THREE.Object3D>) => Boolean(item.point));
-      if (!hit?.point) {
-        return;
+      let hitPoint = pickGroundPointFromScreen(current, mouse, rect.width, rect.height);
+      if (!hitPoint) {
+        raycaster.setFromCamera(mouse, current.camera);
+        const targets = [current.savedPoints, current.livePoints].filter((item): item is THREE.Points => Boolean(item));
+        const intersections = raycaster.intersectObjects(targets, false);
+        const hit = intersections.find((item: THREE.Intersection<THREE.Object3D>) => Boolean(item.point));
+        if (!hit?.point) {
+          return;
+        }
+        hitPoint = hit.point.clone();
+        const surfaceY = groundSurfaceY(current, hitPoint.x, hitPoint.z);
+        if (surfaceY !== null) {
+          hitPoint.y = surfaceY;
+        }
       }
-      const world = threeToRos(hit.point);
-      onSelectGoal({
+      const world = threeToRos(hitPoint);
+      onSelectGoalRef.current({
         x: world.x,
         y: world.y,
         yaw: 0,
-        frame_id: pose?.frame_id ?? pointcloud?.frame_id ?? "map",
+        frame_id: "map",
       });
     };
     renderer.domElement.addEventListener("dblclick", onDoubleClick);
@@ -226,7 +268,11 @@ export function PointCloudCanvas3D({
       }
       sceneRef.current = null;
     };
-  }, [onSelectGoal, pointcloud?.frame_id, pose?.frame_id]);
+  }, []);
+
+  useEffect(() => {
+    showSavedMapRef.current = showSavedMap;
+  }, [showSavedMap]);
 
   useEffect(() => {
     let cancelled = false;
@@ -235,15 +281,16 @@ export function PointCloudCanvas3D({
       return undefined;
     }
 
-    if (!selectedMap || !activeSavedPointcloudPath) {
+    if (!selectedMapId || !activeSavedPointcloudPath || !savedAssetKey) {
       disposePointCloud(current.savedPoints);
       current.savedPoints = null;
       current.savedCount = 0;
       current.activeBounds = null;
+      current.savedAssetKey = null;
+      current.hasAutoFramed = false;
       setRenderStats({ saved: 0, live: current.liveCount });
-      setArtifactState(selectedMap ? "当前地图没有可显示的 3D 点云资产" : "等待 3D 资产");
+      setArtifactState(selectedMapId ? "当前地图没有可显示的 3D 点云资产" : "等待 3D 资产");
       setRenderError(null);
-      applyViewPreset(current, current.preset);
       return () => {
         cancelled = true;
       };
@@ -253,7 +300,7 @@ export function PointCloudCanvas3D({
     setArtifactState("正在加载 Three.js 点云...");
     setRenderError(null);
     loader.load(
-      buildMapFileUrl(selectedMap.map_id, activeSavedPointcloudPath),
+      buildMapFileUrl(selectedMapId, activeSavedPointcloudPath),
       (points: THREE.Points) => {
         if (cancelled || !sceneRef.current) {
           disposePointCloud(points);
@@ -262,13 +309,17 @@ export function PointCloudCanvas3D({
         const next = sceneRef.current;
         disposePointCloud(next.savedPoints);
         next.savedPoints = normalizeLoadedPcd(points, SAVED_POINT_COLOR);
-        next.savedPoints.visible = showSavedMap;
+        next.savedPoints.visible = showSavedMapRef.current;
         next.scene.add(next.savedPoints);
         next.savedCount = getPointCount(next.savedPoints);
         next.activeBounds = new THREE.Box3().setFromObject(next.savedPoints);
+        next.savedAssetKey = savedAssetKey;
         setRenderStats({ saved: next.savedCount, live: next.liveCount });
         setArtifactState(next.savedCount > 0 ? `Three.js 已加载 ${next.savedCount} 点` : "已加载点云但没有可显示点");
-        applyViewPreset(next, next.preset);
+        if (!next.hasAutoFramed) {
+          applyViewPreset(next, next.preset);
+          next.hasAutoFramed = true;
+        }
       },
       undefined,
       (error: unknown) => {
@@ -292,7 +343,7 @@ export function PointCloudCanvas3D({
     return () => {
       cancelled = true;
     };
-  }, [activeSavedPointcloudPath, selectedMap, showSavedMap]);
+  }, [activeSavedPointcloudPath, savedAssetKey, selectedMapId]);
 
   useEffect(() => {
     const current = sceneRef.current;
@@ -309,8 +360,12 @@ export function PointCloudCanvas3D({
       current.scene.add(current.livePoints);
       current.liveCount = pointcloud.points.length;
       if (!hasSavedMap) {
+        const shouldFrame = !current.hasAutoFramed || current.activeBounds === null;
         current.activeBounds = new THREE.Box3().setFromObject(current.livePoints);
-        applyViewPreset(current, current.preset);
+        if (shouldFrame) {
+          applyViewPreset(current, current.preset);
+          current.hasAutoFramed = true;
+        }
       }
     }
 
@@ -338,21 +393,24 @@ export function PointCloudCanvas3D({
   }, [hasSavedMap, showLiveOverlay]);
 
   useEffect(() => {
-    updateMarker(sceneRef.current?.robotMarker ?? null, pose ? rosToThree({ x: pose.x ?? 0, y: pose.y ?? 0, z: 0 }) : null, pose?.yaw ?? 0);
+    const current = sceneRef.current;
+    updateMarker(current?.robotMarker ?? null, pose ? markerPositionFromRos(current, { x: pose.x ?? 0, y: pose.y ?? 0, z: 0 }) : null, pose?.yaw ?? 0);
   }, [pose]);
 
   useEffect(() => {
+    const current = sceneRef.current;
     updateMarker(
-      sceneRef.current?.selectedGoalMarker ?? null,
-      selectedGoal ? rosToThree({ x: selectedGoal.x, y: selectedGoal.y, z: 0 }) : null,
+      current?.selectedGoalMarker ?? null,
+      selectedGoal ? markerPositionFromRos(current, { x: selectedGoal.x, y: selectedGoal.y, z: 0 }) : null,
       selectedGoal?.yaw ?? 0,
     );
   }, [selectedGoal]);
 
   useEffect(() => {
+    const current = sceneRef.current;
     updateMarker(
-      sceneRef.current?.activeGoalMarker ?? null,
-      activeGoal ? rosToThree({ x: activeGoal.x, y: activeGoal.y, z: 0 }) : null,
+      current?.activeGoalMarker ?? null,
+      activeGoal ? markerPositionFromRos(current, { x: activeGoal.x, y: activeGoal.y, z: 0 }) : null,
       activeGoal?.yaw ?? 0,
     );
   }, [activeGoal]);
@@ -418,6 +476,7 @@ export function PointCloudCanvas3D({
         <span>{artifactState}</span>
         <span>{overlayLabel}</span>
         <span>{selectedPointcloudPath ? "历史点云已接管主视图" : "默认地图点云主视图"}</span>
+        <span>左键旋转 / 滚轮缩放 / 按住滑轮或右键平移</span>
         <span>{selectedGoal ? `双击选点 ${selectedGoal.x.toFixed(2)}, ${selectedGoal.y.toFixed(2)}` : "双击点云选导航目标"}</span>
         <span>{`saved=${renderStats.saved} / live=${renderStats.live}`}</span>
         <span>{renderError ?? "renderer=three.js"}</span>
@@ -428,13 +487,39 @@ export function PointCloudCanvas3D({
 
 function createRobotMarker(): THREE.Group {
   const group = new THREE.Group();
-  const body = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.16, 0.16, 0.12, 18),
-    new THREE.MeshStandardMaterial({ color: ROBOT_BODY_COLOR }),
+  const base = new THREE.Mesh(
+    new THREE.TorusGeometry(0.22, 0.035, 12, 48),
+    new THREE.MeshStandardMaterial({
+      color: ROBOT_OUTLINE_COLOR,
+      emissive: ROBOT_OUTLINE_COLOR,
+      emissiveIntensity: 0.35,
+      roughness: 0.45,
+    }),
   );
-  body.position.y = 0.06;
-  const heading = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0.08, 0), 0.42, ROBOT_HEADING_COLOR.getHex(), 0.14, 0.08);
-  group.add(body, heading);
+  base.rotation.x = Math.PI / 2;
+  base.position.y = 0.012;
+  const body = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.17, 0.17, 0.14, 24),
+    new THREE.MeshStandardMaterial({
+      color: ROBOT_BODY_COLOR,
+      emissive: ROBOT_BODY_COLOR,
+      emissiveIntensity: 0.25,
+      metalness: 0.05,
+      roughness: 0.35,
+    }),
+  );
+  body.position.y = 0.082;
+  const mast = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.025, 0.025, 0.45, 12),
+    new THREE.MeshStandardMaterial({
+      color: ROBOT_BODY_COLOR,
+      emissive: ROBOT_BODY_COLOR,
+      emissiveIntensity: 0.45,
+    }),
+  );
+  mast.position.y = 0.3;
+  const heading = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0.1, 0), 0.58, ROBOT_HEADING_COLOR.getHex(), 0.18, 0.1);
+  group.add(base, body, mast, heading);
   group.visible = false;
   return group;
 }
@@ -490,6 +575,97 @@ function updateMarker(group: THREE.Group | null, position: THREE.Vector3 | null,
   group.visible = true;
   group.position.copy(position);
   group.rotation.set(0, -yaw, 0);
+}
+
+function markerPositionFromRos(context: SceneContext | null, point: { x: number; y: number; z: number }) {
+  const position = rosToThree(point);
+  const surfaceY = context ? groundSurfaceY(context, position.x, position.z) : null;
+  if (surfaceY !== null) {
+    position.y = surfaceY;
+  }
+  return position;
+}
+
+function groundSurfaceY(context: SceneContext, x: number, z: number): number | null {
+  const localHeights: number[] = [];
+  const searchRadiusSq = GROUND_SEARCH_RADIUS_M * GROUND_SEARCH_RADIUS_M;
+  const candidates = [context.savedPoints, context.livePoints].filter((item): item is THREE.Points => Boolean(item));
+  for (const points of candidates) {
+    const attribute = points.geometry.getAttribute("position");
+    if (!attribute || !(attribute instanceof THREE.BufferAttribute)) {
+      continue;
+    }
+    for (let index = 0; index < attribute.count; index += 1) {
+      const dx = attribute.getX(index) - x;
+      const dz = attribute.getZ(index) - z;
+      const distanceSq = dx * dx + dz * dz;
+      if (distanceSq <= searchRadiusSq) {
+        localHeights.push(attribute.getY(index));
+      }
+    }
+  }
+  return quantile(localHeights, GROUND_HEIGHT_QUANTILE);
+}
+
+function pickGroundPointFromScreen(context: SceneContext, mouse: THREE.Vector2, width: number, height: number): THREE.Vector3 | null {
+  const candidates: Array<{ point: THREE.Vector3; distanceSq: number }> = [];
+  const maxDistanceSq = GROUND_PICK_RADIUS_PX * GROUND_PICK_RADIUS_PX;
+  const world = new THREE.Vector3();
+  const projected = new THREE.Vector3();
+  const pointClouds = [context.savedPoints, context.livePoints].filter((item): item is THREE.Points => Boolean(item && item.visible));
+
+  for (const points of pointClouds) {
+    const attribute = points.geometry.getAttribute("position");
+    if (!attribute || !(attribute instanceof THREE.BufferAttribute)) {
+      continue;
+    }
+    for (let index = 0; index < attribute.count; index += 1) {
+      world.fromBufferAttribute(attribute, index);
+      points.localToWorld(world);
+      projected.copy(world).project(context.camera);
+      if (projected.z < -1 || projected.z > 1) {
+        continue;
+      }
+      const dx = ((projected.x - mouse.x) * width) / 2;
+      const dy = ((projected.y - mouse.y) * height) / 2;
+      const distanceSq = dx * dx + dy * dy;
+      if (distanceSq <= maxDistanceSq) {
+        candidates.push({ point: world.clone(), distanceSq });
+      }
+    }
+  }
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const groundY = quantile(
+    candidates.map((candidate) => candidate.point.y),
+    GROUND_HEIGHT_QUANTILE,
+  );
+  if (groundY === null) {
+    return null;
+  }
+
+  const groundBand = Math.max(0.08, GROUND_SEARCH_RADIUS_M * 0.18);
+  const groundCandidates = candidates
+    .filter((candidate) => candidate.point.y <= groundY + groundBand)
+    .sort((left, right) => left.distanceSq - right.distanceSq);
+  const picked = (groundCandidates[0] ?? candidates.sort((left, right) => left.distanceSq - right.distanceSq)[0]).point.clone();
+  const surfaceY = groundSurfaceY(context, picked.x, picked.z);
+  if (surfaceY !== null) {
+    picked.y = surfaceY;
+  }
+  return picked;
+}
+
+function quantile(values: number[], q: number): number | null {
+  if (values.length === 0) {
+    return null;
+  }
+  const sorted = [...values].sort((left, right) => left - right);
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.floor((sorted.length - 1) * q)));
+  return sorted[index];
 }
 
 function normalizeLoadedPcd(points: THREE.Points, fallbackColor: THREE.Color): THREE.Points {
