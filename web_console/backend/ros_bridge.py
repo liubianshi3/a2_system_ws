@@ -309,6 +309,7 @@ class RosBridgeNode(Node):
         self.create_subscription(TFMessage, ros.tf_topic, self._on_tf, 20)
         self.create_subscription(String, ros.real_report_topic, self._on_real_report, 10)
         self.create_subscription(String, ros.lidar_status_topic, self._on_lidar_status, 10)
+        self.create_subscription(String, ros.camera_status_topic, self._on_camera_status, 10)
         self.create_subscription(Bool, ros.localization_ok_topic, self._on_localization_ok, 10)
         self.create_subscription(String, ros.localization_status_topic, self._on_localization_status, 10)
         self.create_subscription(String, ros.map_manager_status_topic, self._on_map_manager_status, 10)
@@ -765,6 +766,11 @@ class RosBridgeNode(Node):
     def _on_lidar_status(self, msg: String) -> None:
         with self._lock:
             self.status.lidar_status = self._status_from_string(msg.data)
+        self._publish("status", dump_model(self.status))
+
+    def _on_camera_status(self, msg: String) -> None:
+        with self._lock:
+            self.status.camera_status = self._status_from_string(msg.data)
         self._publish("status", dump_model(self.status))
 
     def _on_localization_ok(self, msg: Bool) -> None:

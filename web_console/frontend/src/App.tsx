@@ -102,6 +102,7 @@ function createEmptySnapshot(): DashboardSnapshot {
       localization_ok: null,
       real_report: { raw: null, mode: null, state: null, ready: null, reason: null, fields: {} },
       lidar_status: { raw: null, mode: null, state: null, ready: null, reason: null, fields: {} },
+      camera_status: { raw: null, mode: null, state: null, ready: null, reason: null, fields: {} },
       localization_status: { raw: null, mode: null, state: null, ready: null, reason: null, fields: {} },
       map_manager_status: { raw: null, mode: null, state: null, ready: null, reason: null, fields: {} },
       task_manager_status: { raw: null, mode: null, state: null, ready: null, reason: null, fields: {} },

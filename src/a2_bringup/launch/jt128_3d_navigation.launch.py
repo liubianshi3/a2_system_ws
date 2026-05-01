@@ -98,7 +98,10 @@ def generate_launch_description():
                 condition=IfCondition(LaunchConfiguration("start_robot_state")),
                 parameters=[
                     f"{a2_system_share}/config/state_bridge.yaml",
-                    {"use_sim_time": LaunchConfiguration("use_sim_time")},
+                    {
+                        "use_sim_time": LaunchConfiguration("use_sim_time"),
+                        "publish_tf": False,
+                    },
                 ],
             ),
             Node(

@@ -73,6 +73,7 @@ export interface RobotStatus {
   localization_ok: boolean | null;
   real_report: TextStatus;
   lidar_status: TextStatus;
+  camera_status: TextStatus;
   localization_status: TextStatus;
   map_manager_status: TextStatus;
   task_manager_status: TextStatus;

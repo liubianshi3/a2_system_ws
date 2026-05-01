@@ -58,13 +58,27 @@ export function SystemStatusSection({
   pose,
   stack,
 }: Pick<StatusSidebarProps, "status" | "pose" | "stack">) {
+  const robotProfile = status?.sdk_status?.fields?.robot_profile || null;
+  const robotModel = status?.sdk_status?.fields?.robot_model || null;
+  const lidarProfile = status?.lidar_status?.fields?.profile || null;
+  const lidarModel = status?.lidar_status?.fields?.model || status?.lidar_status?.fields?.detected_model || null;
+  const lidarTopic = status?.lidar_status?.fields?.topic || null;
+  const cameraProfile = status?.camera_status?.fields?.profile || null;
+  const cameraModel = status?.camera_status?.fields?.model || status?.camera_status?.fields?.detected_model || null;
+  const cameraTopic = status?.camera_status?.fields?.topic || null;
   return (
     <section className="panel">
       <h2>系统状态</h2>
       <StatusRow label="栈模式" value={formatNullable(stack?.mode)} />
       <StatusRow label="ready" value={status?.system_ready === true ? "true" : "false"} />
+      <StatusRow label="robot" value={formatNullable(robotModel || robotProfile)} />
+      <StatusRow label="lidar model" value={formatNullable(lidarModel || lidarProfile)} />
+      <StatusRow label="lidar topic" value={formatNullable(lidarTopic)} />
+      <StatusRow label="camera model" value={formatNullable(cameraModel || cameraProfile)} />
+      <StatusRow label="camera topic" value={formatNullable(cameraTopic)} />
       <StatusRow label="定位" value={localizationLabel(status, pose)} />
       <StatusRow label="lidar" value={formatStatusSummary(status?.lidar_status)} />
+      <StatusRow label="camera" value={formatStatusSummary(status?.camera_status)} />
       <StatusRow label="SDK" value={formatStatusSummary(status?.sdk_status)} />
       <StatusRow label="task mgr" value={formatStatusSummary(status?.task_manager_status)} />
     </section>

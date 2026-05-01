@@ -8,6 +8,7 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from a2_bringup.runtime_mode import normalize_runtime_mode
+from pathlib import Path
 
 
 def _as_bool(value):
@@ -19,25 +20,61 @@ def _load_yaml(path):
         return yaml.safe_load(handle) or {}
 
 
-def _load_real_lidar_config(a2_system_share):
-    cfg = _load_yaml(os.path.join(a2_system_share, "config", "real_lidar.yaml"))
+def _load_real_lidar_config(path):
+    cfg = _load_yaml(path)
     return cfg.get("real_lidar", {}).get("ros__parameters", {})
+
+
+def _load_real_camera_config(path):
+    cfg = _load_yaml(path)
+    return cfg.get("real_camera", {}).get("ros__parameters", {})
+
+
+def _load_robot_config(path):
+    if not path:
+        return {}
+    try:
+        return _load_yaml(path)
+    except OSError:
+        return {}
+
+
+def _resolve_optional_config_path(a2_system_share, value):
+    value = (value or "").strip()
+    if not value:
+        return ""
+    if os.path.isabs(value):
+        return value
+    candidate = os.path.join(a2_system_share, "config", value)
+    if os.path.exists(candidate):
+        return candidate
+    return value
 
 
 def _launch_setup(context, *args, **kwargs):
     del args, kwargs
     runtime_mode = normalize_runtime_mode(LaunchConfiguration("runtime_mode").perform(context))
     use_sim_time = _as_bool(LaunchConfiguration("use_sim_time").perform(context))
+    robot_config_path = LaunchConfiguration("robot_config").perform(context).strip()
     a2_system_share = get_package_share_directory("a2_system")
     bringup_share = get_package_share_directory("a2_bringup")
+    real_lidar_config_path = LaunchConfiguration("real_lidar_config").perform(context).strip()
+    if not real_lidar_config_path:
+        real_lidar_config_path = os.path.join(a2_system_share, "config", "real_lidar.yaml")
+    real_camera_config_path = LaunchConfiguration("real_camera_config").perform(context).strip()
+    if not real_camera_config_path:
+        real_camera_config_path = os.path.join(a2_system_share, "config", "real_camera.yaml")
     diagnostic_only = os.environ.get("A2_REAL_DIAGNOSTIC_ONLY", "0") == "1"
-    real_lidar_cfg = _load_real_lidar_config(a2_system_share)
+    real_lidar_cfg = _load_real_lidar_config(real_lidar_config_path)
     real_lidar_profile = real_lidar_cfg.get("profile", "hesai_jt128_front")
     real_lidar_driver_mode = real_lidar_cfg.get("driver_mode", "")
     real_lidar_imu_topic = real_lidar_cfg.get("imu_topic", "/jt128/front/imu")
     real_lidar_input_topic = real_lidar_cfg.get("input_topic", "/jt128/front/points")
     real_lidar_output_topic = real_lidar_cfg.get("output_topic", "/jt128/front/points")
     real_lidar_output_frame = real_lidar_cfg.get("output_frame_id", "jt128_front_link")
+    requested_extrinsics_file = _resolve_optional_config_path(
+        a2_system_share, real_lidar_cfg.get("extrinsics_file", "")
+    )
     direct_pointcloud_mode = (
         real_lidar_driver_mode == "external_pointcloud"
         or real_lidar_profile == "unitree_native_fused"
@@ -47,11 +84,32 @@ def _launch_setup(context, *args, **kwargs):
     )
     guard_stale_timeout = float(real_lidar_cfg.get("stale_timeout_sec", 1.0))
     use_jt128_extrinsics = real_lidar_output_frame.startswith("jt128_") or "jt128" in real_lidar_profile
-    extrinsics_file = (
+    requested_robot_extrinsics_file = _resolve_optional_config_path(
+        a2_system_share,
+        _load_robot_config(robot_config_path)
+        .get("static_tf_manager", {})
+        .get("ros__parameters", {})
+        .get("extrinsics_file", ""),
+    )
+    extrinsics_file = requested_robot_extrinsics_file or requested_extrinsics_file or (
         f"{a2_system_share}/config/jt128_extrinsics.yaml"
         if use_jt128_extrinsics
         else f"{a2_system_share}/config/extrinsics.yaml"
     )
+    robot_cfg = _load_robot_config(robot_config_path)
+    base_height = float(
+        robot_cfg.get("static_tf_manager", {}).get("ros__parameters", {}).get("base_height", 0.28)
+    )
+    real_camera_cfg = _load_real_camera_config(real_camera_config_path)
+    camera_enabled = bool(real_camera_cfg.get("enabled", False))
+    camera_profile = str(real_camera_cfg.get("profile", "") or "").strip() or "disabled"
+    camera_driver_mode = str(real_camera_cfg.get("driver_mode", "") or "").strip()
+    camera_input_points = str(real_camera_cfg.get("input_pointcloud_topic", "") or "").strip()
+    camera_output_points = str(real_camera_cfg.get("output_pointcloud_topic", "") or "").strip()
+    camera_output_frame = str(real_camera_cfg.get("output_frame_id", "") or "").strip()
+    camera_restamp = bool(real_camera_cfg.get("restamp_on_receive", False))
+    camera_timeout = float(real_camera_cfg.get("stale_timeout_sec", 1.0))
+    camera_use_for_costmap = bool(real_camera_cfg.get("use_for_costmap", False))
 
     actions = [
         Node(
@@ -61,7 +119,7 @@ def _launch_setup(context, *args, **kwargs):
             parameters=[{
                 "extrinsics_file": extrinsics_file,
                 "tf_file": f"{a2_system_share}/config/tf.yaml",
-                "base_height": 0.28,
+                "base_height": base_height,
                 "use_sim_time": use_sim_time,
             }],
         ),
@@ -81,11 +139,15 @@ def _launch_setup(context, *args, **kwargs):
             executable="pointcloud_guard",
             name="pointcloud_guard",
             parameters=[{
+                "runtime_mode": runtime_mode,
                 "pointcloud_topic": guard_pointcloud_topic,
                 "stale_timeout_sec": guard_stale_timeout,
                 "connected_topic": "/a2/lidar/connected",
                 "status_topic": "/a2/lidar/status",
                 "status_label": "lidar",
+                "sensor_profile": real_lidar_profile,
+                "sensor_model": real_lidar_profile,
+                "sensor_config": Path(real_lidar_config_path).name,
                 "use_sim_time": use_sim_time,
             }],
         ),
@@ -128,9 +190,7 @@ def _launch_setup(context, *args, **kwargs):
                     }],
                 )
             )
-        return actions
-
-    if real_lidar_profile == "hesai_jt128_front" or real_lidar_driver_mode == "dedicated_hesai_ros_driver":
+    elif real_lidar_profile == "hesai_jt128_front" or real_lidar_driver_mode == "dedicated_hesai_ros_driver":
         actions.append(
             LogInfo(
                 msg=(
@@ -148,16 +208,78 @@ def _launch_setup(context, *args, **kwargs):
                 }.items(),
             )
         )
-        return actions
-
-    actions.append(
-        LogInfo(
-            msg=(
-                "Unsupported real_lidar profile for the cleaned real-only stack: "
-                f"profile={real_lidar_profile} driver_mode={real_lidar_driver_mode}"
+    else:
+        actions.append(
+            LogInfo(
+                msg=(
+                    "Unsupported real_lidar profile for the cleaned real-only stack: "
+                    f"profile={real_lidar_profile} driver_mode={real_lidar_driver_mode}"
+                )
             )
         )
-    )
+
+    if camera_enabled:
+        if not camera_input_points:
+            actions.append(
+                LogInfo(
+                    msg=(
+                        "Camera enabled but input_pointcloud_topic is empty. "
+                        f"profile={camera_profile} driver_mode={camera_driver_mode}"
+                    )
+                )
+            )
+            return actions
+
+        camera_consumer_points = camera_input_points
+        if camera_output_points:
+            camera_consumer_points = camera_output_points
+
+        if camera_output_points and (
+            camera_input_points != camera_output_points or camera_output_frame or camera_restamp
+        ):
+            actions.append(
+                LogInfo(
+                    msg=(
+                        f"Using external depth pointcloud input={camera_input_points} "
+                        f"output={camera_output_points} frame_id={camera_output_frame} "
+                        f"restamp_on_receive={camera_restamp} use_for_costmap={camera_use_for_costmap}"
+                    )
+                )
+            )
+            actions.append(
+                Node(
+                    package="sensor_sync",
+                    executable="pointcloud_relay",
+                    name="camera_pointcloud_relay",
+                    parameters=[{
+                        "input_topic": camera_input_points,
+                        "output_topic": camera_output_points,
+                        "frame_id": camera_output_frame,
+                        "restamp_on_receive": camera_restamp,
+                    }],
+                )
+            )
+
+        actions.append(
+            Node(
+                package="sensor_sync",
+                executable="pointcloud_guard",
+                name="camera_pointcloud_guard",
+                parameters=[{
+                    "runtime_mode": runtime_mode,
+                    "pointcloud_topic": camera_consumer_points,
+                    "stale_timeout_sec": camera_timeout,
+                    "connected_topic": "/a2/camera/depth/connected",
+                    "status_topic": "/a2/camera/depth/status",
+                    "status_label": "camera_depth",
+                    "sensor_profile": camera_profile,
+                    "sensor_model": camera_profile,
+                    "sensor_config": Path(real_camera_config_path).name,
+                    "use_sim_time": use_sim_time,
+                }],
+            )
+        )
+
     return actions
 
 
@@ -166,5 +288,8 @@ def generate_launch_description():
         DeclareLaunchArgument("runtime_mode", default_value=""),
         DeclareLaunchArgument("use_sim_time", default_value="false"),
         DeclareLaunchArgument("network_interface", default_value=""),
+        DeclareLaunchArgument("robot_config", default_value=""),
+        DeclareLaunchArgument("real_lidar_config", default_value=""),
+        DeclareLaunchArgument("real_camera_config", default_value=""),
         OpaqueFunction(function=_launch_setup),
     ])

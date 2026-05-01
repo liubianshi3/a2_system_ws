@@ -78,6 +78,7 @@ class RobotStatus(BaseModel):
     localization_ok: bool | None = None
     real_report: TextStatus = Field(default_factory=TextStatus)
     lidar_status: TextStatus = Field(default_factory=TextStatus)
+    camera_status: TextStatus = Field(default_factory=TextStatus)
     localization_status: TextStatus = Field(default_factory=TextStatus)
     map_manager_status: TextStatus = Field(default_factory=TextStatus)
     task_manager_status: TextStatus = Field(default_factory=TextStatus)
