@@ -13,7 +13,7 @@
 
 #if A2_ENABLE_UNITREE_SDK
 #include <unitree/robot/channel/channel_factory.hpp>
-#include <unitree/robot/go2/sport/sport_client.hpp>
+#include <unitree/robot/a2/sport/sport_client.hpp>
 #endif
 
 class A2ControlBridgeNode : public rclcpp::Node
@@ -77,10 +77,12 @@ public:
           resolved_interface_.c_str());
       } else {
         unitree::robot::ChannelFactory::Instance()->Init(0, resolved_interface_);
-        sport_client_ = std::make_unique<unitree::robot::go2::SportClient>();
+        sport_client_ = std::make_unique<unitree::robot::a2::SportClient>();
         sport_client_->SetTimeout(25.0F);
         sport_client_->Init();
-        RCLCPP_INFO(get_logger(), "A2 control bridge initialized on interface '%s'.", resolved_interface_.c_str());
+        RCLCPP_INFO(
+          get_logger(), "A2 control bridge initialized with A2 SportClient on interface '%s'.",
+          resolved_interface_.c_str());
       }
     }
 #endif
@@ -123,7 +125,8 @@ private:
       ";state=" + state +
       ";ready=" + std::string(ready ? "true" : "false") +
       ";reason=" + reason +
-      ";interface=" + (resolved_interface_.empty() ? "none" : resolved_interface_);
+      ";interface=" + (resolved_interface_.empty() ? "none" : resolved_interface_) +
+      ";sport_client=a2";
     control_status_pub_->publish(status_msg);
     if (status_msg.data != last_control_status_) {
       last_control_status_ = status_msg.data;
@@ -359,7 +362,7 @@ private:
   std::string last_control_status_;
 
 #if A2_ENABLE_UNITREE_SDK
-  std::unique_ptr<unitree::robot::go2::SportClient> sport_client_;
+  std::unique_ptr<unitree::robot::a2::SportClient> sport_client_;
 #endif
 };
 
