@@ -16,13 +16,27 @@ ament_target_dependencies(a2_control_bridge_node
   std_msgs
   a2_system)
 
-set(UNITREE_SDK2_ROOT "/opt/unitree_robotics" CACHE PATH "Path to unitree_sdk2 checkout")
+set(_A2_DEFAULT_UNITREE_SDK2_ROOT "/opt/unitree_robotics")
+if(DEFINED ENV{UNITREE_SDK2_ROOT} AND NOT "$ENV{UNITREE_SDK2_ROOT}" STREQUAL "")
+  set(_A2_DEFAULT_UNITREE_SDK2_ROOT "$ENV{UNITREE_SDK2_ROOT}")
+elseif(EXISTS "/home/unitree/ZJ/unitree_sdk2-main/include/unitree/robot/a2/sport/sport_client.hpp")
+  set(_A2_DEFAULT_UNITREE_SDK2_ROOT "/home/unitree/ZJ/unitree_sdk2-main")
+elseif(EXISTS "/home/dell/unitree_sdk2/include/unitree/robot/a2/sport/sport_client.hpp")
+  set(_A2_DEFAULT_UNITREE_SDK2_ROOT "/home/dell/unitree_sdk2")
+endif()
+
+set(UNITREE_SDK2_ROOT "${_A2_DEFAULT_UNITREE_SDK2_ROOT}" CACHE PATH "Path to unitree_sdk2 checkout")
 set(UNITREE_SDK2_CONFIG_HINTS
   "${UNITREE_SDK2_ROOT}/lib/cmake/unitree_sdk2"
   "$ENV{UNITREE_SDK2_ROOT}/lib/cmake/unitree_sdk2"
+  "/home/unitree/ZJ/unitree_sdk2-main/lib/cmake/unitree_sdk2"
   "/opt/unitree_robotics/lib/cmake/unitree_sdk2"
   "/usr/local/lib/cmake/unitree_sdk2")
-find_package(unitree_sdk2 CONFIG QUIET PATHS ${UNITREE_SDK2_CONFIG_HINTS} NO_DEFAULT_PATH)
+if(EXISTS "${UNITREE_SDK2_ROOT}/include/unitree/robot/a2/sport/sport_client.hpp")
+  set(unitree_sdk2_FOUND FALSE)
+else()
+  find_package(unitree_sdk2 CONFIG QUIET PATHS ${UNITREE_SDK2_CONFIG_HINTS} NO_DEFAULT_PATH)
+endif()
 
 if(unitree_sdk2_FOUND)
   target_compile_definitions(a2_control_bridge_node PRIVATE A2_ENABLE_UNITREE_SDK=1)

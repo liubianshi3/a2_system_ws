@@ -25,6 +25,7 @@ install(PROGRAMS
   tools/record_bag.sh
   tools/run_unit_tests.sh
   tools/start_3d_web_console_suite.sh
+  tools/start_jt128_3d_closed_loop.sh
   tools/start_jt128_3d_stack.sh
   tools/start_jt128_dlio_mapping.sh
   tools/start_real_stack.sh
