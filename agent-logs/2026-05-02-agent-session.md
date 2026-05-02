@@ -135,3 +135,87 @@ Local branch `master` now includes commit `eb45495` (`sync a2_system_ws for GitH
 Need usable GitHub credentials in this environment, such as a Personal Access Token or an authenticated GitHub CLI session, to complete the push.
 
 ---
+
+## Entry 6 — Work update
+
+### Time
+13:42 CST
+
+### Action taken
+Reviewed the user's manual push attempts and identified the GitHub authentication failure mode.
+
+### Tool or method used
+Terminal output review of repeated `git push -u origin master` attempts using username/password prompts.
+
+### Why this approach
+The immediate blocker is authentication, and the push error itself already provides enough evidence to determine the valid next authentication methods.
+
+### Problems encountered
+GitHub rejected all attempts that used account password input. GitHub no longer supports password authentication for git over HTTPS.
+
+### Fixes applied
+Prepared guidance to switch to either a Personal Access Token over HTTPS or SSH key authentication.
+
+### Current result
+Repository state remains committed locally and ready to push. The remaining work is strictly credential setup.
+
+### Remaining risks or follow-ups
+Need the user to complete either PAT-based HTTPS auth or SSH-key-based auth before retrying the push.
+
+---
+
+## Entry 7 — Work update
+
+### Time
+13:45 CST
+
+### Action taken
+Inspected the existing local SSH keypair and SSH client configuration, then switched the repository `origin` remote from HTTPS to SSH.
+
+### Tool or method used
+`ls -la ~/.ssh`, `sed -n '1,220p' ~/.ssh/config`, `cat ~/.ssh/id_ed25519.pub`, `ssh-keygen -lf ~/.ssh/id_ed25519.pub`, `git remote set-url origin git@github.com:liubianshi3/a2_system_ws.git`
+
+### Why this approach
+The machine already had a reusable ED25519 keypair, so reusing it is faster and lower risk than generating another key. Switching the remote to SSH aligns the repository with the requested authentication method.
+
+### Problems encountered
+The existing SSH config did not yet include a GitHub host block, and GitHub SSH auth has not been verified because the public key still needs to be registered in the user's GitHub account.
+
+### Fixes applied
+Added a `github.com` SSH config entry to force use of `~/.ssh/id_ed25519` and updated the repository `origin` remote to `git@github.com:liubianshi3/a2_system_ws.git`.
+
+### Current result
+The repo is now configured for SSH-based GitHub access. The public key ready to register is the current `~/.ssh/id_ed25519.pub`.
+
+### Remaining risks or follow-ups
+The user must add the public key to the correct GitHub account before SSH authentication and push can succeed.
+
+---
+
+## Entry 8 — Work update
+
+### Time
+13:49 CST
+
+### Action taken
+Diagnosed the SSH connection reset on `github.com:22`, tested GitHub's SSH-over-443 endpoint, and prepared local SSH config to use that endpoint for GitHub pushes.
+
+### Tool or method used
+`ssh -T git@github.com`, `ssh -T -p 443 -o StrictHostKeyChecking=accept-new git@ssh.github.com`, `~/.ssh/config`
+
+### Why this approach
+The failure pattern showed a network path issue to TCP port 22 rather than a key mismatch. GitHub officially supports SSH over port 443, which is commonly available when port 22 is blocked.
+
+### Problems encountered
+Direct SSH to `github.com:22` was reset by the network path.
+
+### Fixes applied
+Verified successful authentication through `ssh.github.com:443` and updated SSH configuration so the `github.com` host alias uses `ssh.github.com` on port `443`.
+
+### Current result
+SSH authentication to GitHub is confirmed working for account `liubianshi3` over port `443`, and the repository remote is already configured for SSH.
+
+### Remaining risks or follow-ups
+Need to commit the latest log update and run the final `git push -u origin master`.
+
+---
