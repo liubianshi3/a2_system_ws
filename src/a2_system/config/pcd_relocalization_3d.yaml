@@ -1,0 +1,47 @@
+pcd_relocalizer_3d:
+  ros__parameters:
+    map_root: "${A2_WORKSPACE}/runtime/maps"
+    map_id: ""
+    pcd_path: ""
+
+    live_cloud_topic: /jt128/front/points
+    odom_topic: /jt128/dlio/odom
+    initial_pose_topic: /initialpose
+    pose_topic: /a2/relocalization/pose
+    status_topic: /a2/relocalization/status
+
+    map_frame: map
+    odom_frame: odom
+    base_frame: base_link
+
+    # Unitree A2 JT128 front lidar structural design reference.
+    # This is not a calibrated extrinsic, but it is better than the previous
+    # provisional pose and keeps relocalization aligned with the DLIO chain.
+    base_to_lidar_xyz: [0.33767, 0.0, 0.08134]
+    base_to_lidar_use_rotation_matrix: true
+    base_to_lidar_rotation_matrix: [0.0, 0.0, 1.0,
+                                    1.0, 0.0, 0.0,
+                                    0.0, 1.0, 0.0]
+    base_to_lidar_rpy: [0.0, 0.0, 0.0]
+
+    publish_tf: true
+    # Do not auto-ready from identity. A saved PCD map may have a different
+    # odom origin, so the operator/Web must provide /initialpose first.
+    auto_seed_identity: false
+    icp_interval_sec: 2.0
+
+    voxel_leaf_size: 0.35
+    max_map_points: 20000
+    max_scan_points: 800
+    min_correspondences: 120
+    max_correspondence_distance: 0.8
+    max_iterations: 4
+    max_translation_correction: 1.2
+    max_rotation_correction_deg: 5.0
+    max_map_to_odom_translation: 20.0
+    max_base_distance_from_origin: 120.0
+    ready_fitness_threshold: 0.35
+
+    xy_variance: 0.04
+    z_variance: 0.08
+    rot_variance: 0.04
