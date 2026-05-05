@@ -3,8 +3,8 @@ pointcloud_to_laserscan:
     input_topic: /jt128/front/points
     output_topic: /scan
     frame_id: jt128_front_link
-    min_height: -0.10
-    max_height: 0.90
+    min_height: 0.15
+    max_height: 0.55
     min_range: 0.20
     max_range: 10.0
     angle_min: -3.14159

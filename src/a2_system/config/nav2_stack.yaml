@@ -1,11 +1,11 @@
 amcl:
   ros__parameters:
     use_sim_time: false
-    alpha1: 0.2
-    alpha2: 0.2
-    alpha3: 0.2
-    alpha4: 0.2
-    alpha5: 0.2
+    alpha1: 0.35
+    alpha2: 0.10
+    alpha3: 0.25
+    alpha4: 0.30
+    alpha5: 0.40
     base_frame_id: "base_link"
     beam_skip_distance: 0.5
     beam_skip_error_threshold: 0.9
@@ -156,6 +156,7 @@ bt_navigator:
     bt_loop_duration: 10
     default_server_timeout: 20
     wait_for_service_timeout: 1000
+    default_bt_xml_filename: $(find-pkg-share a2_system)/config/navigate_w_replanning_and_recovery.xml
     plugin_lib_names:
       - nav2_compute_path_to_pose_action_bt_node
       - nav2_compute_path_through_poses_action_bt_node

@@ -122,6 +122,7 @@ class AutoScanMission(Node):
         self.manage_map_service = self.declare_parameter("manage_map_service", "/map_manager/manage_map").value
         self.set_mode_service = self.declare_parameter("set_mode_service", "/map_manager/set_mode").value
         self.mission_mode = self.declare_parameter("mission_mode", "mapping").value
+        self.pose_transient_local = bool(self.declare_parameter("pose_transient_local", True).value)
         self.preflight_timeout_sec = float(self.declare_parameter("preflight_timeout_sec", 20.0).value)
         self.goal_response_timeout_sec = float(
             self.declare_parameter("goal_response_timeout_sec", 5.0).value
@@ -173,11 +174,17 @@ class AutoScanMission(Node):
             reliability=ReliabilityPolicy.RELIABLE,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
         )
+        volatile_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.VOLATILE,
+        )
         self.create_subscription(OccupancyGrid, self.map_topic, self.on_map, transient_qos)
         if self.pose_msg_type == "nav_msgs/msg/Odometry":
             self.create_subscription(Odometry, self.pose_topic, self.on_odom, 20)
         else:
-            self.create_subscription(PoseWithCovarianceStamped, self.pose_topic, self.on_pose, transient_qos)
+            pose_qos = transient_qos if self.pose_transient_local else volatile_qos
+            self.create_subscription(PoseWithCovarianceStamped, self.pose_topic, self.on_pose, pose_qos)
         self.create_subscription(Odometry, self.odom_topic, self.on_odom, 20)
         self.create_subscription(PointCloud2, self.pointcloud_topic, self.on_pointcloud, 10)
         self.create_subscription(Bool, self.localization_ok_topic, self.on_localization_ok, 10)

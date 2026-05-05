@@ -112,21 +112,31 @@ def check_nav2_stack(result: CheckResult) -> None:
 
 
 def check_localization(result: CheckResult) -> None:
-    params = get(load_yaml(CONFIG_DIR / "localization.yaml"), "localization_gate", "ros__parameters", default={})
-    result.require(params.get("input_pose_topic") == "/jt128/dlio/odom", "localization_gate must consume /jt128/dlio/odom in JT128 3D-first mode")
+    nav_params = get(load_yaml(CONFIG_DIR / "localization_nav2.yaml"), "localization_gate", "ros__parameters", default={})
+    mapping_params = get(load_yaml(CONFIG_DIR / "localization_mapping.yaml"), "localization_gate", "ros__parameters", default={})
+    result.require(nav_params.get("input_pose_topic") == "/amcl_pose", "navigation_2d localization must consume /amcl_pose")
     result.require(
-        params.get("input_pose_msg_type") == "nav_msgs/msg/Odometry",
-        "localization_gate must consume nav_msgs/msg/Odometry in 3D-first mode",
+        nav_params.get("input_pose_msg_type") == "geometry_msgs/msg/PoseWithCovarianceStamped",
+        "navigation_2d localization must consume geometry_msgs/msg/PoseWithCovarianceStamped",
     )
     result.require(
-        not bool(params.get("pose_transient_local", True)),
-        "localization_gate must use volatile QoS for JT128 DLIO odom in 3D-first mode",
+        not bool(nav_params.get("pose_transient_local", True)),
+        "navigation_2d localization must use volatile QoS for runtime pose input",
     )
-    result.require(bool(params.get("latch_valid_pose", False)), "localization_gate must latch recently valid poses")
-    result.require(float(params.get("max_pose_age_sec", 999.0)) <= 10.0, "max_pose_age_sec must be bounded for real readiness")
-    result.require(float(params.get("latched_pose_timeout_sec", 999.0)) <= 60.0, "latched_pose_timeout_sec must be bounded")
-    result.require(float(params.get("max_xy_variance", 999.0)) <= 0.20, "max_xy_variance must be <= 0.20")
-    result.require(float(params.get("max_yaw_variance", 999.0)) <= 0.15, "max_yaw_variance must be <= 0.15")
+    result.require(bool(nav_params.get("latch_valid_pose", False)), "navigation_2d localization must latch recently valid poses")
+    result.require(float(nav_params.get("max_pose_age_sec", 999.0)) <= 10.0, "navigation_2d max_pose_age_sec must be bounded")
+    result.require(float(nav_params.get("latched_pose_timeout_sec", 999.0)) <= 60.0, "navigation_2d latched_pose_timeout_sec must be bounded")
+    result.require(float(nav_params.get("max_xy_variance", 999.0)) <= 0.20, "navigation_2d max_xy_variance must be <= 0.20")
+    result.require(float(nav_params.get("max_yaw_variance", 999.0)) <= 0.15, "navigation_2d max_yaw_variance must be <= 0.15")
+    result.require(mapping_params.get("input_pose_topic") == "/odom", "mapping_2d localization must consume /odom")
+    result.require(
+        mapping_params.get("input_pose_msg_type") == "nav_msgs/msg/Odometry",
+        "mapping_2d localization must consume nav_msgs/msg/Odometry",
+    )
+    result.require(
+        not bool(mapping_params.get("latch_valid_pose", True)),
+        "mapping_2d localization must not depend on latched AMCL-style poses",
+    )
 
 
 def check_state_bridge(result: CheckResult) -> None:
@@ -147,7 +157,7 @@ def check_real_lidar(result: CheckResult) -> None:
 
 def check_goal_bridge(result: CheckResult) -> None:
     params = get(load_yaml(CONFIG_DIR / "nav2.yaml"), "goal_bridge", "ros__parameters", default={})
-    result.require(params.get("navigation_backend") == "pose_topic_3d", "goal_bridge must default to pose_topic_3d")
+    result.require(params.get("navigation_backend") == "nav2", "goal_bridge must default to nav2 in 2D mainline")
     result.require(
         params.get("pose_goal_topic") == "/a2/nav3/goal_pose",
         "goal_bridge pose_goal_topic must be /a2/nav3/goal_pose",
@@ -164,15 +174,21 @@ def check_scan_mission(result: CheckResult) -> None:
     waypoints = waypoint_yaml.get("waypoints", [])
     scan_launch = (BRINGUP_DIR / "scan_mission.launch.py").read_text(encoding="utf-8")
 
-    result.require(params.get("navigation_backend") == "pose_topic_3d", "scan mission must default to pose_topic_3d")
+    result.require(
+        params.get("navigation_backend") in {"pose_topic_3d", "nav2", "auto"},
+        "scan mission must explicitly remain compatible with the 3D backup backend",
+    )
     result.require(
         params.get("pose_goal_topic") == "/a2/nav3/goal_pose",
         "scan mission pose goal topic must be /a2/nav3/goal_pose",
     )
-    result.require(params.get("pose_topic") == "/jt128/dlio/odom", "scan mission must consume /jt128/dlio/odom pose in JT128 3D-first mode")
     result.require(
-        params.get("pose_msg_type") == "nav_msgs/msg/Odometry",
-        "scan mission pose_msg_type must be nav_msgs/msg/Odometry in 3D-first mode",
+        params.get("pose_topic") in {"/jt128/dlio/odom", "/amcl_pose"},
+        "scan mission must declare whether it uses JT128 odom (3D backup) or /amcl_pose (2D mainline)",
+    )
+    result.require(
+        params.get("pose_msg_type") in {"nav_msgs/msg/Odometry", "geometry_msgs/msg/PoseWithCovarianceStamped"},
+        "scan mission pose_msg_type must match the selected pose_topic",
     )
     result.require(params.get("pointcloud_topic") == "/jt128/front/points", "scan mission must use JT128 front pointcloud")
     result.require(params.get("navigate_action_name") == "/navigate_to_pose", "scan mission must keep Nav2 action as fallback")
@@ -221,6 +237,11 @@ def check_launch_defaults(result: CheckResult) -> None:
                 'DeclareLaunchArgument("real_localization_mode", default_value="amcl")' in text,
                 f"{name} must default real_localization_mode to amcl",
             )
+            result.require(
+                'DeclareLaunchArgument("stack_mode", default_value="")' in text
+                or name == "scan_mission.launch.py",
+                f"{name} must expose stack_mode for explicit 2D/3D mode selection",
+            )
         else:
             result.require("waypoints_file" in text, "scan_mission.launch.py must expose a waypoints_file argument")
             result.require("dry_run" in text, "scan_mission.launch.py must expose a dry_run argument")
@@ -256,8 +277,8 @@ def check_real_mapping_source_contract(result: CheckResult) -> None:
         "mapping.launch.py must support slam_toolbox",
     )
     result.require(
-        slam_params.get("mapping_stack_profile") == "front_lidar_pointcloud_3d",
-        "slam.yaml must default mapping_stack_profile to front_lidar_pointcloud_3d",
+        slam_params.get("mapping_stack_profile") == "slam_toolbox",
+        "slam.yaml must default mapping_stack_profile to slam_toolbox for 2D mainline",
     )
     result.require(
         slam_toolbox_params.get("scan_topic") == "/scan",
@@ -285,6 +306,15 @@ def check_real_mapping_source_contract(result: CheckResult) -> None:
     )
 
 
+def check_mode_specific_safety_contracts(result: CheckResult) -> None:
+    safety_nav = get(load_yaml(CONFIG_DIR / "safety_nav2.yaml"), "safety_supervisor", "ros__parameters", default={})
+    safety_mapping = get(load_yaml(CONFIG_DIR / "safety_mapping.yaml"), "safety_supervisor", "ros__parameters", default={})
+    result.require(bool(safety_nav.get("require_map", False)), "navigation_2d safety must require /map")
+    result.require(bool(safety_nav.get("require_localization", False)), "navigation_2d safety must require localization")
+    result.require(not bool(safety_mapping.get("require_map", True)), "mapping_2d safety must not require a pre-existing static map")
+    result.require(bool(safety_mapping.get("require_localization", False)), "mapping_2d safety must still require relaxed odom localization")
+
+
 def check_web_stack_contract(result: CheckResult) -> None:
     stack_control = first_existing(
         [
@@ -307,6 +337,14 @@ def check_web_stack_contract(result: CheckResult) -> None:
     result.require(
         '"A2_REAL_LOCALIZATION_MODE": "uslam_odom"' in text,
         "web 3D navigation startup must explicitly set A2_REAL_LOCALIZATION_MODE=uslam_odom",
+    )
+    result.require(
+        'target_mode="mapping_2d"' in text,
+        "web stack control must expose mapping_2d as the default mapping mode",
+    )
+    result.require(
+        'target_mode="navigation_3d_backup"' in text and '"navigation_2d"' in text,
+        "web stack control must distinguish navigation_2d from navigation_3d_backup",
     )
 
 
@@ -342,6 +380,7 @@ def main() -> int:
     check_launch_defaults(result)
     check_real_entrypoints(result)
     check_real_mapping_source_contract(result)
+    check_mode_specific_safety_contracts(result)
     check_web_stack_contract(result)
     check_docs(result)
 

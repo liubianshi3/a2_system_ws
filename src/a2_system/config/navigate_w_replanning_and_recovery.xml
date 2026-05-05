@@ -1,0 +1,43 @@
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="3" name="NavigateRecovery">
+      <!-- primary: follow the path, replanning whenever it looks stale -->
+      <PipelineSequence name="NavigateWithReplanning">
+        <!-- rate-control the replanning so we don't thrash -->
+        <RateController hz="0.5">
+          <Action ID="ComputePathToPose" goal="{goal}" path="{path}" planner_id="GridBased"
+                  error_code_id="{compute_path_error}"/>
+        </RateController>
+        <Action ID="FollowPath" path="{path}" controller_id="FollowPath"
+                error_code_id="{follow_error}"/>
+      </PipelineSequence>
+
+      <!-- recovery: progressively more aggressive -->
+      <RoundRobin name="RecoveryActions">
+        <!-- 1. gentle turn in place (≈ 120 degrees) -->
+        <Action ID="Spin" spin_dist="2.1" is_recovery="true"
+                error_code_id="{spin_error}"/>
+        <!-- 2. short backup to unstick -->
+        <Action ID="BackUp" backup_dist="0.15" backup_speed="0.10"
+                is_recovery="true"
+                error_code_id="{backup_error}"/>
+        <!-- 3. drive blind for a short distance to escape local minimum -->
+        <Action ID="DriveOnHeading" dist_to_travel="0.3" speed="0.10"
+                time_allowance="6"
+                is_recovery="true" error_code_id="{drive_error}"/>
+        <!-- 4. clear costmaps (costmap got poisoned by stale obstacles) -->
+        <Sequence name="ClearBothCostmaps">
+          <Action ID="ClearEntireCostmap" name="ClearGlobalCostmap"
+                  service_name="/global_costmap/clear_entirely_global_costmap"
+                  error_code_id="{clear_global_error}"/>
+          <Action ID="ClearEntireCostmap" name="ClearLocalCostmap"
+                  service_name="/local_costmap/clear_entirely_local_costmap"
+                  error_code_id="{clear_local_error}"/>
+        </Sequence>
+        <!-- 5. reinitialize global localization -->
+        <Action ID="ReinitializeGlobalLocalization"
+                error_code_id="{reinit_error}"/>
+      </RoundRobin>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>
