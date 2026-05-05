@@ -1,0 +1,42 @@
+backend_type: auto
+allow_backend_fallback: false
+
+nav2_action_name: /navigate_to_pose
+
+navcommand_service_candidates:
+  - /nav_command
+  - /a2/nav_command
+  - /a2_nav_command
+  - /NavCommand
+  - /a2/task_manager/command
+
+required_topics:
+  - /map
+  - /tf
+  - /odom
+  - /amcl_pose
+
+frame_id: map
+
+runs: 3
+navigation_timeout: 120.0
+backend_wait_timeout: 10.0
+runtime_graph_wait_sec: 1.0
+arrival_tolerance: 0.35
+wait_between_goals: 2.0
+
+use_pose_feedback: true
+pose_topic_candidates:
+  - /amcl_pose
+  - /odom
+
+stop_on_failure: false
+first_goal_only: true
+dry_check_only: true
+
+log_dir: src/a2_nav_test_runner/results
+
+safety:
+  require_manual_supervision: true
+  emergency_stop_required: true
+  first_test_goal_max_distance: 2.0

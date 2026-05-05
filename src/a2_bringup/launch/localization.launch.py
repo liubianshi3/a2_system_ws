@@ -13,6 +13,9 @@ def _launch_setup(context, *args, **kwargs):
     real_localization_mode = (
         LaunchConfiguration("real_localization_mode").perform(context).strip() or "amcl"
     )
+    stack_mode = LaunchConfiguration("stack_mode").perform(context).strip() or (
+        "navigation_2d" if enable_nav2_bringup else "mapping_2d"
+    )
     use_sim_time = as_bool(LaunchConfiguration("use_sim_time").perform(context))
     a2_system_share = get_package_share_directory("a2_system")
     actions = []
@@ -42,13 +45,18 @@ def _launch_setup(context, *args, **kwargs):
                     "use_sim_time": use_sim_time,
                 }],
             )
-        )
+    )
+    localization_config = (
+        f"{a2_system_share}/config/localization_mapping.yaml"
+        if stack_mode == "mapping_2d"
+        else f"{a2_system_share}/config/localization_nav2.yaml"
+    )
     actions.append(
         Node(
             package="localization_manager",
             executable="localization_gate",
             name="localization_gate",
-            parameters=[f"{a2_system_share}/config/localization.yaml", {
+            parameters=[localization_config, {
                 "runtime_mode": runtime_mode,
                 "latch_valid_pose": enable_nav2_bringup,
                 "use_sim_time": use_sim_time,
@@ -64,5 +72,6 @@ def generate_launch_description():
         DeclareLaunchArgument("use_sim_time", default_value="false"),
         DeclareLaunchArgument("enable_nav2_bringup", default_value="false"),
         DeclareLaunchArgument("real_localization_mode", default_value="amcl"),
+        DeclareLaunchArgument("stack_mode", default_value=""),
         OpaqueFunction(function=_launch_setup),
     ])

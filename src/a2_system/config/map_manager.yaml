@@ -2,7 +2,7 @@ map_manager:
   ros__parameters:
     map_root: ${A2_WORKSPACE}/runtime/maps
     occupancy_topic: /map
-    map_representation: pointcloud_map_3d
+    map_representation: occupancy_grid_2d
     pointcloud_topic_3d: /jt128/dlio/map_points
     pointcloud_fallback_topic_3d: ""
     pointcloud_primary_stale_sec: 2.0

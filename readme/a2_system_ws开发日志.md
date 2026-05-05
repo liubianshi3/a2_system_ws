@@ -1826,7 +1826,7 @@ http://192.168.31.49:8080/
   - 维护 `map -> odom`
   - 发布 `/amcl_pose`
 - 真实模式下的 localization launch 现在支持：
-  - `real_localization_mode:=manual_odom`
+  - `real_localization_mode:=manual_odom`（备用模式，不再推荐为默认）
 - `Nav2` 在这个模式下：
   - 启 `map_server`
   - 启 navigation stack
@@ -1904,7 +1904,7 @@ src/a2_system/tools/start_real_stack.sh
 
 1. `enable_nav2_bringup:=true`
 2. `enable_control_bridge:=true`
-3. `real_localization_mode:=manual_odom`
+3. `real_localization_mode:=manual_odom`（备用）
 
 ### 36.2 为什么还要处理 DDS 环境变量
 
@@ -2423,7 +2423,7 @@ reason=command_sent
 截至 `2026-04-23` 这轮现场联调结束，可以认为下面这些判断已经成立：
 
 1. 正式 `start_real_stack.sh` 已能稳定拉起单实例真机导航栈。
-2. `manual_odom` 真机定位链已经能支撑网页“先设初始位姿，再导航”的交互模式。
+2. `manual_odom` 真机定位链已经能支撑网页“先设初始位姿，再导航”的交互模式，但它现在是**备用链路**；默认主线应使用 AMCL。
 3. Web 后端对应接口已经能：
    - 设置初始位姿
    - 发送导航目标

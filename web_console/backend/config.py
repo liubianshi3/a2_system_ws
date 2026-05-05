@@ -26,9 +26,9 @@ class RosTopicConfig:
     pointcloud_preview_max_points: int = 20000
     manage_map_service: str = "/map_manager/manage_map"
     task_manager_service: str = "/a2/task_manager/command"
-    localization_pose_topic: str = "/a2/relocalization/pose"
+    localization_pose_topic: str = "/amcl_pose"
     localization_pose_msg_type: str = "geometry_msgs/msg/PoseWithCovarianceStamped"
-    odom_topic: str = "/jt128/dlio/odom"
+    odom_topic: str = "/odom"
     tf_topic: str = "/tf"
     tf_static_topic: str = "/tf_static"
     real_report_topic: str = "/a2/real/report"
@@ -71,12 +71,12 @@ class NavigationConfig:
     initial_pose_wait_timeout_sec: float = 8.0
     initial_pose_publish_interval_sec: float = 0.4
     allow_send_goal: bool = True
-    require_map_for_goal: bool = False
+    require_map_for_goal: bool = True
     require_localization_ready: bool = True
     pose_goal_tolerance_m: float = 0.35
     pose_goal_yaw_tolerance_rad: float = 0.35
     occupancy_block_threshold: int = 65
-    goal_snap_radius_m: float = 1.5
+    goal_snap_radius_m: float = 5.0
     goal_clearance_m: float = 0.18
     initial_pose_snap_radius_m: float = 1.0
     initial_pose_clearance_m: float = 0.18
@@ -103,9 +103,10 @@ class StackConfig:
     workspace: str = "~/a2_system_ws"
     network_interface: str = "net1"
     map_root: str = "~/a2_system_ws/runtime/maps"
-    start_script: str = "~/a2_system_ws/src/a2_system/tools/start_jt128_3d_stack.sh"
-    stop_script: str = "~/a2_system_ws/src/a2_system/tools/stop_jt128_stack.sh"
+    start_script: str = "~/a2_system_ws/src/a2_system/tools/start_real_stack.sh"
+    stop_script: str = "~/a2_system_ws/src/a2_system/tools/stop_stack.sh"
     command_timeout_sec: float = 15.0
+    navigation_representation: str = "pointcloud_map_3d"
 
 
 @dataclass

@@ -55,10 +55,13 @@ LOG_HIGHLIGHT_MARKERS = (
 )
 PatternSpec = str | tuple[str, ...]
 
-MAPPING_NODES: list[tuple[str, str, PatternSpec]] = [
+MAPPING_NODES_2D: list[tuple[str, str, PatternSpec]] = [
     ("driver", "JT128 Hesai driver", ("jt128_hesai_driver", "hesai_ros_driver_node")),
-    ("dlio_odom", "JT128 DLIO odom", ("jt128_dlio_odom", "dlio_odom_node")),
-    ("dlio_map", "JT128 DLIO map", ("jt128_dlio_map", "dlio_map_node")),
+    ("sdk", "a2_sdk_bridge", "a2_sdk_bridge_node"),
+    ("control", "a2_control_bridge", "a2_control_bridge_node"),
+    ("scan", "pointcloud_to_laserscan", "pointcloud_to_laserscan"),
+    ("slam", "slam_toolbox", "slam_toolbox"),
+    ("localization", "mapping localization gate", "localization_gate"),
     ("map_manager", "map_manager", "map_manager_node"),
 ]
 
@@ -215,18 +218,18 @@ class StackController:
             command = [
                 str(self.start_script),
                 "--mode",
-                mode,
+                "navigation" if mode.startswith("navigation") else "mapping",
                 "--lidar-iface",
                 self.config.stack.network_interface,
                 "--no-web",
             ]
-            if mode == "navigation":
+            if mode.startswith("navigation"):
                 if not map_id:
                     raise StackControlError("3D 导航模式缺少地图 ID")
                 command.extend(["--map-id", map_id, "--enable-motion"])
             return command
         if self.start_script.name == "start_jt128_dlio_mapping.sh":
-            if mode != "mapping":
+            if not mode.startswith("mapping"):
                 fallback = self.start_script.with_name("start_jt128_3d_stack.sh")
                 if fallback.exists():
                     command = [
@@ -243,6 +246,19 @@ class StackController:
                     return command
                 raise StackControlError("当前启动脚本只支持建图，不能启动 3D 导航")
             return [str(self.start_script), "--iface", self.config.stack.network_interface, "--no-web"]
+        if self.start_script.name == "start_real_stack.sh":
+            if mode.startswith("mapping"):
+                stack_mode = "mapping_2d"
+            elif mode == "navigation_3d_backup":
+                stack_mode = "navigation_3d_backup"
+            else:
+                stack_mode = "navigation_2d"
+            return [
+                str(self.start_script),
+                self.config.stack.network_interface,
+                "enable_control_bridge:=true",
+                f"stack_mode:={stack_mode}",
+            ]
         return [str(self.start_script), self.config.stack.network_interface, "enable_control_bridge:=true"]
 
     def stop(self) -> dict[str, str]:
@@ -278,7 +294,7 @@ class StackController:
         self.stop_if_running()
         self._write_runtime_state(
             mode="starting",
-            target_mode="mapping",
+            target_mode="mapping_2d",
             selected_map_id=None,
             selected_map_yaml=None,
             message="建图模式启动中",
@@ -286,10 +302,10 @@ class StackController:
 
         try:
             result = self._run(
-                self._start_script_command("mapping"),
-                env={"A2_ENABLE_NAV2": "false", "A2_MAP_YAML": ""},
+                self._start_script_command("mapping_2d"),
+                env={"A2_STACK_MODE": "mapping_2d", "A2_MAP_YAML": ""},
             )
-            self._wait_for_expected_nodes("mapping")
+            self._wait_for_expected_nodes("mapping_2d")
         except Exception as exc:
             self._terminate_runtime_processes()
             self._write_runtime_state(
@@ -302,7 +318,7 @@ class StackController:
             raise
 
         self._write_runtime_state(
-            mode="mapping",
+            mode="mapping_2d",
             target_mode=None,
             selected_map_id=None,
             selected_map_yaml=None,
@@ -322,26 +338,25 @@ class StackController:
                 map_info.navigation_compatibility_reason or f"地图不兼容当前导航链: {map_id}"
             )
 
+        use_3d_navigation = self._is_3d_navigation_map(map_info)
+        target_mode = "navigation_3d_backup" if use_3d_navigation else "navigation_2d"
         self.stop_if_running()
         self._write_runtime_state(
             mode="starting",
-            target_mode="navigation",
+            target_mode=target_mode,
             selected_map_id=map_info.map_id,
             selected_map_yaml=map_info.map_yaml,
             message=f"导航模式启动中: {map_info.map_id}",
         )
-
-        use_3d_navigation = self._is_3d_navigation_map(map_info)
         try:
             result = self._run(
-                self._start_script_command("navigation" if use_3d_navigation else "mapping", map_info.map_id),
+                self._start_script_command(target_mode, map_info.map_id),
                 env={
-                    "A2_ENABLE_NAV2": "false" if use_3d_navigation else "true",
-                    "A2_REAL_LOCALIZATION_MODE": "uslam_odom" if use_3d_navigation else "amcl",
+                    "A2_STACK_MODE": target_mode,
                     "A2_MAP_YAML": map_info.map_yaml or "",
                 },
             )
-            self._wait_for_expected_nodes("navigation", use_3d_navigation=use_3d_navigation)
+            self._wait_for_expected_nodes(target_mode, use_3d_navigation=use_3d_navigation)
             if not use_3d_navigation:
                 self._ensure_navigation_lifecycle_ready()
         except Exception as exc:
@@ -356,7 +371,7 @@ class StackController:
             raise
 
         self._write_runtime_state(
-            mode="navigation",
+            mode="navigation_3d_backup" if use_3d_navigation else "navigation_2d",
             target_mode=None,
             selected_map_id=map_info.map_id,
             selected_map_yaml=map_info.map_yaml,
@@ -380,11 +395,12 @@ class StackController:
         return str(params.get("navigation_representation", "") or "").strip()
 
     def _is_3d_navigation_map(self, map_info: SavedMapInfo | None = None) -> bool:
-        if self.navigation_representation() == "pointcloud_map_3d":
-            return bool(map_info and map_info.navigation_compatible)
-        if map_info is None:
+        # 2D mainline behavior: never auto-switch to 3D navigation just because
+        # a map contains pointcloud assets. 3D navigation is enabled only when
+        # the system-level navigation_representation explicitly selects it.
+        if self.navigation_representation() != "pointcloud_map_3d":
             return False
-        return bool(map_info.has_pointcloud_3d or map_info.representation == "pointcloud_map_3d")
+        return bool(map_info and map_info.navigation_compatible)
 
     def _navigation_compatibility_for_map(self, map_info: SavedMapInfo) -> tuple[bool, str | None]:
         if self.navigation_representation() != "pointcloud_map_3d":
@@ -402,7 +418,7 @@ class StackController:
         *,
         use_3d_navigation: bool | None = None,
     ) -> list[tuple[str, str, PatternSpec]]:
-        if mode == "navigation":
+        if mode in {"navigation", "navigation_2d", "navigation_3d_backup"}:
             if use_3d_navigation is None:
                 runtime_state = self._read_runtime_state()
                 selected_map_id = runtime_state.get("selected_map_id")
@@ -410,11 +426,14 @@ class StackController:
                 if map_info is not None:
                     use_3d_navigation = self._is_3d_navigation_map(map_info)
                 else:
-                    use_3d_navigation = self.navigation_representation() == "pointcloud_map_3d"
+                    use_3d_navigation = (
+                        mode == "navigation_3d_backup"
+                        or self.navigation_representation() == "pointcloud_map_3d"
+                    )
             if use_3d_navigation:
                 return NAVIGATION_NODES_3D
             return NAVIGATION_NODES
-        return MAPPING_NODES
+        return MAPPING_NODES_2D
 
     def _wait_for_expected_nodes(self, mode: str, *, use_3d_navigation: bool | None = None) -> None:
         expected = self._expected_nodes_for_mode(mode, use_3d_navigation=use_3d_navigation)
@@ -1060,7 +1079,7 @@ class StackController:
         if runtime_mode in {"starting", "stopping"}:
             mode = runtime_mode
             expected_mode = target_mode or inferred_mode
-        elif runtime_mode in {"mapping", "navigation"}:
+        elif runtime_mode in {"mapping", "mapping_2d", "navigation", "navigation_2d", "navigation_3d_backup"}:
             mode = runtime_mode
             expected_mode = runtime_mode
         elif inferred_mode != "stopped":
@@ -1070,7 +1089,11 @@ class StackController:
             mode = "stopped"
             expected_mode = "stopped"
 
-        expected = self._expected_nodes_for_mode(expected_mode) if expected_mode in {"mapping", "navigation"} else []
+        expected = (
+            self._expected_nodes_for_mode(expected_mode)
+            if expected_mode in {"mapping", "mapping_2d", "navigation", "navigation_2d", "navigation_3d_backup"}
+            else []
+        )
         nodes = [
             NodeCheck(
                 key=key,
@@ -1107,10 +1130,22 @@ class StackController:
             for pattern in ("occupancy_mapper", "native_map_relay", "slam_toolbox", "map_manager_node")
         )
         has_bringup = any("bringup.launch.py" in proc.args for proc in processes)
-        if has_nav:
-            return "navigation"
+        has_3d_nav = any(
+            "jt128_3d_navigation.launch.py" in proc.args
+            or "pose_goal_controller_3d" in proc.args
+            or "pcd_relocalizer_3d" in proc.args
+            for proc in processes
+        )
+        has_2d_nav = any(
+            "bt_navigator" in proc.args or "controller_server" in proc.args or "planner_server" in proc.args
+            for proc in processes
+        )
+        if has_3d_nav:
+            return "navigation_3d_backup"
+        if has_2d_nav:
+            return "navigation_2d"
         if has_mapping:
-            return "mapping"
+            return "mapping_2d"
         if has_bringup:
             return "starting"
         return "stopped"
@@ -1271,7 +1306,7 @@ class StackController:
         return candidates[-1]
 
     def _describe_process(self, process: ProcessInfo) -> str:
-        for _, label, pattern in NAVIGATION_NODES + NAVIGATION_NODES_3D + MAPPING_NODES:
+        for _, label, pattern in NAVIGATION_NODES + NAVIGATION_NODES_3D + MAPPING_NODES_2D:
             if self._matches_pattern(process.args, pattern):
                 return label
         return f"pid={process.pid}"

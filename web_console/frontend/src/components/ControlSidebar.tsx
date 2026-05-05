@@ -84,7 +84,7 @@ export function ModeControlSection({
   onStartMapping,
   onStopStack,
 }: Pick<ControlSidebarProps, "stack" | "stackBusy" | "startMappingReason" | "onStartMapping" | "onStopStack">) {
-  const isMapping = stack?.mode === "mapping";
+  const isMapping = stack?.mode?.startsWith("mapping") ?? false;
 
   return (
     <section className="panel">
@@ -133,8 +133,8 @@ export function MapManagementSection({
   | "onStartNavigation"
   | "onSaveMap"
 >) {
-  const isMapping = stack?.mode === "mapping";
-  const isNavigation = stack?.mode === "navigation";
+  const isMapping = stack?.mode?.startsWith("mapping") ?? false;
+  const isNavigation = stack?.mode?.startsWith("navigation") ?? false;
   const selectedMap = maps.find((map) => map.map_id === selectedMapId) ?? null;
   const pointcloudArtifact =
     selectedMap?.artifacts.find((artifact) => artifact.kind === "native_pointcloud_map_3d") ??

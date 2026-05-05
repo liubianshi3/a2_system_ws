@@ -1,0 +1,10 @@
+FollowPath.xy_goal_tolerance: 0.06
+data_source: mock_navigation_test
+general_goal_checker.plugin: nav2_controller::SimpleGoalChecker
+general_goal_checker.xy_goal_tolerance: 0.06
+general_goal_checker.yaw_goal_tolerance: 0.08
+global_costmap.global_costmap.robot_base_frame: base_link
+local_costmap.local_costmap.robot_base_frame: base_link
+scenario: controller_stop_error
+scenarios_yaml: src/a2_nav_test_runner/config/mock_precision_scenarios.yaml
+use_sim_time: false

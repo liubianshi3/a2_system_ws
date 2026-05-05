@@ -27,11 +27,14 @@ def _launch_setup(context, *args, **kwargs):
     pointcloud_topic = LaunchConfiguration("pointcloud_topic")
     runtime_mode_value = LaunchConfiguration("runtime_mode").perform(context)
     enable_nav2_bringup = as_bool(LaunchConfiguration("enable_nav2_bringup").perform(context))
+    stack_mode = LaunchConfiguration("stack_mode").perform(context).strip() or (
+        "navigation_2d" if enable_nav2_bringup else "mapping_2d"
+    )
     a2_system_share = get_package_share_directory("a2_system")
     mapping_source = _real_mapping_source(a2_system_share, runtime_mode_value)
     actions = []
 
-    if not enable_nav2_bringup:
+    if stack_mode == "mapping_2d" and not enable_nav2_bringup:
         if mapping_source == "front_lidar_pointcloud_3d":
             actions.append(
                 Node(
@@ -110,5 +113,6 @@ def generate_launch_description():
         DeclareLaunchArgument("use_sim_time", default_value="false"),
         DeclareLaunchArgument("enable_nav2_bringup", default_value="false"),
         DeclareLaunchArgument("pointcloud_topic", default_value="/jt128/front/points"),
+        DeclareLaunchArgument("stack_mode", default_value=""),
         OpaqueFunction(function=_launch_setup),
     ])

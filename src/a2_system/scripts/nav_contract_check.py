@@ -250,12 +250,16 @@ def check_launch_defaults(result: CheckResult) -> None:
 def check_real_entrypoints(result: CheckResult) -> None:
     start_real_stack = (TOOLS_DIR / "start_real_stack.sh").read_text(encoding="utf-8")
     result.require(
-        'A2_REAL_LOCALIZATION_MODE:-amcl' in start_real_stack,
-        "start_real_stack.sh must default A2_REAL_LOCALIZATION_MODE to amcl",
+        'A2_STACK_MODE="${A2_STACK_MODE:-navigation_3d_backup}"' in start_real_stack,
+        "start_real_stack.sh must default A2_STACK_MODE to navigation_3d_backup",
     )
     result.require(
-        'A2_REAL_LOCALIZATION_MODE:-manual_odom' not in start_real_stack,
-        "start_real_stack.sh must not default A2_REAL_LOCALIZATION_MODE to manual_odom",
+        'real_localization_mode:=uslam_odom' in start_real_stack,
+        "start_real_stack.sh must map navigation_3d_backup to uslam_odom",
+    )
+    result.require(
+        'stack_mode:=${A2_STACK_MODE}' in start_real_stack,
+        "start_real_stack.sh must forward the resolved A2_STACK_MODE into launch arguments",
     )
 
 
@@ -335,15 +339,15 @@ def check_web_stack_contract(result: CheckResult) -> None:
         "web navigation startup contract must not require manual localization by default",
     )
     result.require(
-        '"A2_REAL_LOCALIZATION_MODE": "uslam_odom"' in text,
-        "web 3D navigation startup must explicitly set A2_REAL_LOCALIZATION_MODE=uslam_odom",
+        '"A2_STACK_MODE"' in text,
+        "web 3D navigation startup must explicitly set A2_STACK_MODE",
     )
     result.require(
-        'target_mode="mapping_2d"' in text,
+        '"mapping_2d"' in text,
         "web stack control must expose mapping_2d as the default mapping mode",
     )
     result.require(
-        'target_mode="navigation_3d_backup"' in text and '"navigation_2d"' in text,
+        '"navigation_3d_backup"' in text and '"navigation_2d"' in text,
         "web stack control must distinguish navigation_2d from navigation_3d_backup",
     )
 

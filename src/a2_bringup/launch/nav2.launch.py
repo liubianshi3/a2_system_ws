@@ -32,6 +32,9 @@ def _launch_setup(context, *args, **kwargs):
     real_localization_mode = (
         LaunchConfiguration("real_localization_mode").perform(context).strip() or "amcl"
     )
+    stack_mode = LaunchConfiguration("stack_mode").perform(context).strip() or (
+        "navigation_2d" if enable_nav2_bringup else "mapping_2d"
+    )
     map_yaml = LaunchConfiguration("map").perform(context).strip()
     use_sim_time = as_bool(LaunchConfiguration("use_sim_time").perform(context))
     use_sim_time_text = str(use_sim_time).lower()
@@ -41,7 +44,10 @@ def _launch_setup(context, *args, **kwargs):
         "ros__parameters", {}
     )
     navigation_representation = str(slam_params.get("navigation_representation", "occupancy_grid_2d"))
-    use_3d_navigation = runtime_mode == "real" and navigation_representation == "pointcloud_map_3d"
+    use_3d_navigation = (
+        stack_mode == "navigation_3d_backup"
+        or (runtime_mode == "real" and navigation_representation == "pointcloud_map_3d" and stack_mode != "navigation_2d")
+    )
     use_manual_real_localization = (
         runtime_mode == "real"
         and enable_nav2_bringup
@@ -59,7 +65,7 @@ def _launch_setup(context, *args, **kwargs):
         ),
     ]
 
-    if enable_nav2_bringup and not use_3d_navigation:
+    if stack_mode == "navigation_2d" and enable_nav2_bringup and not use_3d_navigation:
         actions.append(
             Node(
                 package="sensor_sync",
@@ -74,7 +80,7 @@ def _launch_setup(context, *args, **kwargs):
 
     try:
         nav2_share = get_package_share_directory("nav2_bringup")
-        if enable_nav2_bringup and not use_3d_navigation:
+        if stack_mode == "navigation_2d" and enable_nav2_bringup and not use_3d_navigation:
             if not map_yaml:
                 actions.append(
                     LogInfo(
@@ -150,5 +156,6 @@ def generate_launch_description():
         DeclareLaunchArgument("enable_nav2_bringup", default_value="false"),
         DeclareLaunchArgument("real_localization_mode", default_value="amcl"),
         DeclareLaunchArgument("map", default_value=""),
+        DeclareLaunchArgument("stack_mode", default_value=""),
         OpaqueFunction(function=_launch_setup),
     ])

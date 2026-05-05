@@ -1,0 +1,8 @@
+parent_frame,child_frame,timestamp,x,y,z,yaw,available,error
+map,odom,1777867897.0183809,,,,,False,"""map"" passed to lookupTransform argument target_frame does not exist. "
+odom,base_link,1777867897.1794803,,,,,False,"""odom"" passed to lookupTransform argument target_frame does not exist. "
+map,base_link,1777867897.3407753,,,,,False,"""map"" passed to lookupTransform argument target_frame does not exist. "
+map,base_footprint,1777867897.5019803,,,,,False,"""map"" passed to lookupTransform argument target_frame does not exist. "
+base_link,base_footprint,1777867897.6635108,,,,,False,"""base_link"" passed to lookupTransform argument target_frame does not exist. "
+base_link,lidar,1777867897.8246849,,,,,False,"""base_link"" passed to lookupTransform argument target_frame does not exist. "
+base_link,imu_link,1777867897.9859798,,,,,False,"""base_link"" passed to lookupTransform argument target_frame does not exist. "

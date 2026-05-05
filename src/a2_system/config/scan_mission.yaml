@@ -26,7 +26,7 @@ auto_scan_mission:
     allow_unknown_cells: false
     occupied_threshold: 65
     min_clearance_cells: 0
-    navigation_backend: nav2
+    navigation_backend: auto
     pose_transient_local: false
     pose_goal_topic: /a2/nav3/goal_pose
     navigate_action_name: /navigate_to_pose

@@ -64,6 +64,12 @@ Dry-run behavior:
 - does not save a map
 - writes the same Markdown report format
 
+## Map Validation
+
+The scan mission performs **Map Validation** by checking every waypoint (and any intermediate samples, if enabled)
+against the active `/map` occupancy grid before sending navigation goals. This prevents sending goals into occupied
+or unknown regions when `allow_unknown_cells=false`.
+
 ## Real Run
 
 After dry-run passes and the physical area is safe:

@@ -183,7 +183,7 @@ class VirtualObstacleListing(BaseModel):
 class NavigationTaskState(BaseModel):
     state: str = "idle"
     message: str | None = None
-    backend: str = "pose_topic_3d"
+    backend: str = "auto"
     action_server_ready: bool = False
     goal: NavigationGoal | None = None
     feedback: dict[str, Any] = Field(default_factory=dict)

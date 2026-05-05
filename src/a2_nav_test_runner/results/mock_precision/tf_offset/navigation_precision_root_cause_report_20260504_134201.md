@@ -1,0 +1,70 @@
+# Navigation Precision Root Cause Report
+
+- data_source: `mock_navigation_test`
+- THIS_IS_MOCK_DATA
+
+- Conclusion: `PASS_NAV_FOR_PADS`
+- Primary root cause: `clean_navigation`
+
+## 1. Runtime Navigation Chain
+
+- backend_candidate: `nav2_action`
+
+## 2. Runtime Tolerance Parameters
+
+- No runtime parameter summary was available.
+
+## 3. Static Config vs Runtime
+
+- Static scan report was not available.
+
+## 4. Single Goal Repeat Statistics
+
+- count: `5`
+- backend_success_rate: `1.0000`
+- runner_arrival_success_rate: `1.0000`
+- mean_final_error_tf_map_base_link: `0.0088`
+- mean_final_error_tf_map_base_footprint: `0.2525`
+- max_final_error_tf_map_base_link: `0.0143`
+- std_final_error_tf_map_base_link: `0.0044`
+
+## 5. Static Pose Stability
+
+- tf_map_base_x_std: `0.0038`
+- tf_map_base_y_std: `0.0081`
+- amcl_x_std: `0.0133`
+- amcl_y_std: `0.0011`
+- odom_x_std: `0.0000`
+- odom_y_std: `0.0000`
+
+## 6. TF Stability
+
+- `base_link->base_footprint` available_count=7 error_count=0
+- `base_link->imu_link` available_count=7 error_count=0
+- `base_link->lidar` available_count=7 error_count=0
+- `map->base_footprint` available_count=6 error_count=1
+- `map->base_link` available_count=6 error_count=1
+- `map->odom` available_count=6 error_count=1
+- `odom->base_link` available_count=6 error_count=1
+
+## 7. Top 5 Suspects
+
+- Primary suspect from current evidence: `clean_navigation`.
+
+## 8. Evidence-Based Recommendations
+
+- Collect more runtime evidence.
+
+## 9. Do Not Adjust Yet
+
+- Do not blame PADS or task scheduling before navigation precision is understood.
+- Do not write mock or diagnosis-only outputs as real robot experiment results.
+- Do not tune runner arrival tolerance alone and claim navigation improved.
+
+## 10. PADS Readiness
+
+- Navigation precision looks acceptable for the first PADS handoff step.
+
+## 11. Conclusion Reasons
+
+- Single-goal success and final-error bounds are already acceptable for PADS handoff.

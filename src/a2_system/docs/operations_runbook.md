@@ -1,6 +1,6 @@
 # A2 Operations Runbook
 
-This runbook is the standard operating flow for the current front-LiDAR-first A2 navigation and scan mission stack.
+This runbook is the standard operating flow for the current **2D-mainline, 3D-backup** A2 stack.
 
 ## Preconditions
 
@@ -32,7 +32,26 @@ cd /home/dell/a2_system_ws
 ./scripts/deploy_to_a2.sh a2
 ```
 
-## JT128 DLIO Mapping
+## JT128 2D Mapping Mainline
+
+The recommended default mapping mode is `mapping_2d`:
+
+```bash
+ros2 launch a2_bringup bringup.launch.py \
+  network_interface:=eth0 \
+  enable_nav2_bringup:=false \
+  stack_mode:=mapping_2d
+```
+
+Pass condition:
+
+- `/jt128/front/points` is live
+- `/scan` is live
+- `/map` is live
+- `/a2/localization_ok=true` via the relaxed odom-based mapping contract
+- `/a2/allow_motion=true`
+
+## JT128 DLIO Mapping (3D backup / auxiliary workflow)
 
 ```bash
 ssh a2
@@ -57,6 +76,7 @@ Pass condition:
 ros2 launch a2_bringup bringup.launch.py \
   network_interface:=eth0 \
   enable_nav2_bringup:=true \
+  stack_mode:=navigation_2d \
   real_localization_mode:=amcl \
   map:=/home/unitree/a2_system_ws/runtime/maps/<map_id>/map.yaml
 ```
@@ -69,7 +89,7 @@ Pass condition:
 - `/a2/localization_ok=true`
 - `/a2/real/report ready=true`
 
-## JT128 3D Navigation
+## JT128 3D Navigation (backup path)
 
 ```bash
 ros2 launch a2_bringup jt128_3d_navigation.launch.py map_id:=<saved_map_id>
@@ -85,6 +105,12 @@ Pass condition:
 - `/a2/nav3/status` transitions out of `waiting_goal`
 
 ## Web Console
+
+The web console is now **2D-first**:
+
+- if `/map` is available, the default operational view should be the 2D map
+- 3D pointcloud remains available as a backup/inspection view
+- sending navigation goals in the default mainline should resolve to Nav2
 
 The web console is served by FastAPI after the frontend is built:
 
@@ -120,4 +146,8 @@ If the stack is inconsistent:
 /home/unitree/a2_system_ws/install/a2_system/share/a2_system/stop_stack.sh
 ```
 
-Then restart mapping or navigation mode from the web console or launch files.
+Then restart one of the explicit modes:
+
+- `mapping_2d`
+- `navigation_2d`
+- `navigation_3d_backup`

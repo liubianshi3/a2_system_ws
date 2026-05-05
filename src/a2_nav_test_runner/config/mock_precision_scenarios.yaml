@@ -1,0 +1,49 @@
+scenarios:
+  - name: clean_nav
+    description: 正常导航，误差小
+    final_error: 0.05
+    pose_noise_std: 0.01
+    tf_jump_enabled: false
+    runtime_xy_goal_tolerance: 0.06
+    runner_arrival_tolerance: 0.20
+    expected_result: PASS_NAV_FOR_PADS
+
+  - name: tolerance_025
+    description: 模拟运行时到达容差为 0.25 m
+    runtime_xy_goal_tolerance: 0.25
+    final_error: 0.24
+    pose_noise_std: 0.01
+    expected_root_cause: goal_tolerance_too_large
+
+  - name: runner_tolerance_issue
+    description: runner arrival_tolerance 过大
+    runtime_xy_goal_tolerance: 0.06
+    runner_arrival_tolerance: 0.35
+    final_error: 0.30
+    backend_success: false
+    runner_success: true
+    pose_noise_std: 0.01
+    expected_root_cause: runner_arrival_tolerance
+
+  - name: localization_noise
+    description: 静止定位抖动大
+    runtime_xy_goal_tolerance: 0.06
+    pose_noise_std: 0.15
+    final_error: 0.25
+    expected_root_cause: localization_instability
+
+  - name: tf_offset
+    description: base_link 存在固定 TF 偏移
+    runtime_xy_goal_tolerance: 0.06
+    fixed_offset_x: 0.25
+    fixed_offset_y: 0.00
+    pose_noise_std: 0.01
+    final_error: 0.00
+    expected_root_cause: tf_or_base_frame_offset
+
+  - name: controller_stop_error
+    description: 定位稳定但最终停不准
+    runtime_xy_goal_tolerance: 0.06
+    pose_noise_std: 0.01
+    final_error: 0.25
+    expected_root_cause: controller_or_execution_stop_error

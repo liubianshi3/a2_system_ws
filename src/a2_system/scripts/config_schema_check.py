@@ -132,7 +132,7 @@ def audit_nav2_stack(result: AuditResult, config_dir: Path) -> None:
 
 
 def audit_localization(result: AuditResult, config_dir: Path) -> None:
-    data = load_yaml_unique(config_dir / "localization.yaml")
+    data = load_yaml_unique(config_dir / "localization_nav2.yaml")
     params = get(data, "localization_gate", "ros__parameters", default={})
     require_keys(
         result,
@@ -149,19 +149,59 @@ def audit_localization(result: AuditResult, config_dir: Path) -> None:
             "pose_transient_local",
         ],
     )
-    result.require(params.get("input_pose_topic") == "/jt128/dlio/odom", "localization_gate input must be /jt128/dlio/odom in JT128 3D-first mode")
+    result.require(params.get("input_pose_topic") == "/amcl_pose", "navigation_2d localization input must be /amcl_pose")
     result.require(
-        params.get("input_pose_msg_type") == "nav_msgs/msg/Odometry",
-        "localization_gate input_pose_msg_type must be nav_msgs/msg/Odometry",
+        params.get("input_pose_msg_type") == "geometry_msgs/msg/PoseWithCovarianceStamped",
+        "navigation_2d localization input_pose_msg_type must be geometry_msgs/msg/PoseWithCovarianceStamped",
     )
-    result.require(params.get("status_topic") == "/a2/localization_ok", "localization status topic mismatch")
+    result.require(params.get("status_topic") == "/a2/localization_ok", "navigation_2d localization status topic mismatch")
     result.require(
         not bool(params.get("pose_transient_local", True)),
-        "localization_gate must use volatile QoS for JT128 DLIO odom in 3D-first mode",
+        "navigation_2d localization must use volatile QoS for runtime pose input",
     )
-    result.require(float(params.get("max_pose_age_sec", 999.0)) <= 10.0, "localization max_pose_age_sec too loose")
-    result.require(float(params.get("max_xy_variance", 999.0)) <= 0.20, "localization max_xy_variance too loose")
-    result.require(float(params.get("max_yaw_variance", 999.0)) <= 0.15, "localization max_yaw_variance too loose")
+    result.require(float(params.get("max_pose_age_sec", 999.0)) <= 10.0, "navigation_2d localization max_pose_age_sec too loose")
+    result.require(float(params.get("max_xy_variance", 999.0)) <= 0.20, "navigation_2d localization max_xy_variance too loose")
+    result.require(float(params.get("max_yaw_variance", 999.0)) <= 0.15, "navigation_2d localization max_yaw_variance too loose")
+
+
+def audit_localization_mapping(result: AuditResult, config_dir: Path) -> None:
+    data = load_yaml_unique(config_dir / "localization_mapping.yaml")
+    params = get(data, "localization_gate", "ros__parameters", default={})
+    require_keys(
+        result,
+        data,
+        "localization_gate.ros__parameters",
+        [
+            "input_pose_topic",
+            "input_pose_msg_type",
+            "status_topic",
+            "status_report_topic",
+            "max_pose_age_sec",
+            "max_xy_variance",
+            "max_yaw_variance",
+            "pose_transient_local",
+        ],
+    )
+    result.require(params.get("input_pose_topic") == "/odom", "mapping_2d localization input must be /odom")
+    result.require(
+        params.get("input_pose_msg_type") == "nav_msgs/msg/Odometry",
+        "mapping_2d localization input_pose_msg_type must be nav_msgs/msg/Odometry",
+    )
+    result.require(
+        not bool(params.get("latch_valid_pose", True)),
+        "mapping_2d localization must not depend on latched AMCL-style poses",
+    )
+
+
+def audit_safety_modes(result: AuditResult, config_dir: Path) -> None:
+    nav_data = load_yaml_unique(config_dir / "safety_nav2.yaml")
+    nav_params = get(nav_data, "safety_supervisor", "ros__parameters", default={})
+    mapping_data = load_yaml_unique(config_dir / "safety_mapping.yaml")
+    mapping_params = get(mapping_data, "safety_supervisor", "ros__parameters", default={})
+    result.require(bool(nav_params.get("require_map", False)), "navigation_2d safety must require_map")
+    result.require(bool(nav_params.get("require_localization", False)), "navigation_2d safety must require_localization")
+    result.require(not bool(mapping_params.get("require_map", True)), "mapping_2d safety must not require a pre-existing static map")
+    result.require(bool(mapping_params.get("require_localization", False)), "mapping_2d safety must require relaxed odom localization")
 
 
 def audit_native_map(result: AuditResult, config_dir: Path) -> None:
@@ -197,11 +237,11 @@ def audit_real_mapping_stack(result: AuditResult, config_dir: Path) -> None:
     mapping_profile = str(slam_params.get("mapping_stack_profile", "") or "").strip()
     result.require(
         mapping_profile in {"front_lidar_pointcloud_3d", "slam_toolbox", "native_global_map", "projected_occupancy"},
-        "slam.yaml mapping_stack_profile must be a known 3D-first or legacy fallback profile",
+        "slam.yaml mapping_stack_profile must be a known mapping profile",
     )
     result.require(
-        mapping_profile == "front_lidar_pointcloud_3d",
-        "slam.yaml must default real mapping_stack_profile to front_lidar_pointcloud_3d",
+        mapping_profile == "slam_toolbox",
+        "slam.yaml must default real mapping_stack_profile to slam_toolbox for 2D mainline",
     )
 
     toolbox_cfg = load_yaml_unique(config_dir / "slam_toolbox_mapping.yaml")
@@ -238,7 +278,10 @@ def audit_all(config_dir: Path) -> AuditResult:
     for filename in (
         "scan_mission.yaml",
         "nav2_stack.yaml",
-        "localization.yaml",
+        "localization_nav2.yaml",
+        "localization_mapping.yaml",
+        "safety_nav2.yaml",
+        "safety_mapping.yaml",
         "native_map_relay.yaml",
         "slam.yaml",
         "slam_toolbox_mapping.yaml",
@@ -254,6 +297,8 @@ def audit_all(config_dir: Path) -> AuditResult:
         audit_scan_mission(result, config_dir)
         audit_nav2_stack(result, config_dir)
         audit_localization(result, config_dir)
+        audit_localization_mapping(result, config_dir)
+        audit_safety_modes(result, config_dir)
         audit_native_map(result, config_dir)
         audit_real_mapping_stack(result, config_dir)
     return result

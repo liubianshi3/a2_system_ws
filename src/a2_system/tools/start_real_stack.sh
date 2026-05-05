@@ -5,6 +5,7 @@ WORKSPACE="${A2_WORKSPACE:-$HOME/a2_system_ws}"
 IFACE="${A2_NETWORK_INTERFACE:-}"
 EXTRA_ARGS=()
 export A2_WORKSPACE="${WORKSPACE}"
+export A2_STACK_MODE="${A2_STACK_MODE:-navigation_3d_backup}"
 
 if [[ $# -gt 0 ]]; then
   IFACE="$1"
@@ -14,11 +15,27 @@ fi
 if [[ $# -gt 0 ]]; then
   EXTRA_ARGS=("$@")
 fi
-if [[ "${A2_ENABLE_NAV2:-false}" == "1" || "${A2_ENABLE_NAV2:-false}" == "true" ]]; then
-  EXTRA_ARGS+=("enable_nav2_bringup:=true")
-  EXTRA_ARGS+=("enable_control_bridge:=true")
-  EXTRA_ARGS+=("real_localization_mode:=${A2_REAL_LOCALIZATION_MODE:-amcl}")
-fi
+case "${A2_STACK_MODE}" in
+  navigation_3d_backup|navigation_3d)
+    EXTRA_ARGS+=("enable_nav2_bringup:=false")
+    EXTRA_ARGS+=("real_localization_mode:=uslam_odom")
+    EXTRA_ARGS+=("stack_mode:=${A2_STACK_MODE}")
+    ;;
+  navigation_2d)
+    EXTRA_ARGS+=("enable_nav2_bringup:=true")
+    EXTRA_ARGS+=("enable_control_bridge:=true")
+    EXTRA_ARGS+=("real_localization_mode:=amcl")
+    EXTRA_ARGS+=("stack_mode:=${A2_STACK_MODE}")
+    ;;
+  mapping_2d)
+    EXTRA_ARGS+=("enable_nav2_bringup:=false")
+    EXTRA_ARGS+=("real_localization_mode:=manual_odom")
+    EXTRA_ARGS+=("stack_mode:=${A2_STACK_MODE}")
+    ;;
+  *)
+    EXTRA_ARGS+=("stack_mode:=${A2_STACK_MODE}")
+    ;;
+esac
 if [[ -n "${A2_MAP_YAML:-}" ]]; then
   EXTRA_ARGS+=("map:=${A2_MAP_YAML}")
 fi

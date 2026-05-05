@@ -53,6 +53,7 @@ def _launch_setup(context, *args, **kwargs):
     enable_nav2_bringup_bool = as_bool(enable_nav2_bringup)
     enable_control_bridge = LaunchConfiguration("enable_control_bridge").perform(context)
     real_localization_mode = LaunchConfiguration("real_localization_mode").perform(context)
+    requested_stack_mode = LaunchConfiguration("stack_mode").perform(context).strip()
     map_yaml = LaunchConfiguration("map").perform(context)
     use_sim_time = use_sim_time_for_mode(runtime_mode)
     use_sim_time_text = str(use_sim_time).lower()
@@ -64,7 +65,15 @@ def _launch_setup(context, *args, **kwargs):
         "ros__parameters", {}
     )
     map_representation = str(slam_params.get("primary_map_representation", "occupancy_grid_2d"))
-    require_map_for_safety = map_representation != "pointcloud_map_3d"
+    stack_mode = requested_stack_mode or ("navigation_2d" if enable_nav2_bringup_bool else "mapping_2d")
+    is_mapping_2d = stack_mode == "mapping_2d"
+    is_navigation_2d = stack_mode == "navigation_2d"
+    is_navigation_3d_backup = stack_mode == "navigation_3d_backup"
+    safety_config = (
+        f"{a2_system_share}/config/safety_mapping.yaml"
+        if is_mapping_2d
+        else f"{a2_system_share}/config/safety_nav2.yaml"
+    )
 
     actions = [
         Node(
@@ -92,6 +101,7 @@ def _launch_setup(context, *args, **kwargs):
             parameters=[f"{a2_system_share}/config/task_manager.yaml", {
                 "runtime_mode": runtime_mode,
                 "use_sim_time": use_sim_time,
+                "navigation_backend": "nav2" if is_navigation_2d else "pose_topic_3d",
             }],
         ),
         Node(
@@ -106,6 +116,8 @@ def _launch_setup(context, *args, **kwargs):
                 "network_interface": network_interface,
                 "runtime_mode": runtime_mode,
                 "sim_cmd_topic": "",
+                "allow_motion_without_map": is_mapping_2d,
+                "allow_motion_without_localization": False,
                 "use_sim_time": use_sim_time,
             }],
         ),
@@ -113,13 +125,14 @@ def _launch_setup(context, *args, **kwargs):
             package="safety_manager",
             executable="safety_supervisor",
             name="safety_supervisor",
-            parameters=[f"{a2_system_share}/config/safety.yaml", {
+            parameters=[safety_config, {
                 "lidar_topic": real_lidar_topic,
                 "runtime_mode": runtime_mode,
-                "latch_map_ready": enable_nav2_bringup_bool,
-                "map_transient_local": enable_nav2_bringup_bool,
+                "latch_map_ready": is_navigation_2d,
+                "map_transient_local": is_navigation_2d,
                 "map_representation": map_representation,
-                "require_map": require_map_for_safety,
+                "require_map": is_navigation_2d,
+                "require_localization": True,
                 "use_sim_time": use_sim_time,
             }],
         ),
@@ -156,6 +169,7 @@ def _launch_setup(context, *args, **kwargs):
                 "use_sim_time": use_sim_time_text,
                 "enable_nav2_bringup": enable_nav2_bringup,
                 "pointcloud_topic": real_lidar_topic,
+                "stack_mode": stack_mode,
             }.items(),
         ),
         IncludeLaunchDescription(
@@ -165,6 +179,7 @@ def _launch_setup(context, *args, **kwargs):
                 "use_sim_time": use_sim_time_text,
                 "enable_nav2_bringup": enable_nav2_bringup,
                 "real_localization_mode": real_localization_mode,
+                "stack_mode": stack_mode,
             }.items(),
         ),
         IncludeLaunchDescription(
@@ -175,6 +190,7 @@ def _launch_setup(context, *args, **kwargs):
                 "enable_nav2_bringup": enable_nav2_bringup,
                 "real_localization_mode": real_localization_mode,
                 "map": map_yaml,
+                "stack_mode": stack_mode,
             }.items(),
         ),
         IncludeLaunchDescription(
@@ -197,5 +213,6 @@ def generate_launch_description():
         DeclareLaunchArgument("enable_control_bridge", default_value="false"),
         DeclareLaunchArgument("real_localization_mode", default_value="amcl"),
         DeclareLaunchArgument("map", default_value=""),
+        DeclareLaunchArgument("stack_mode", default_value=""),
         OpaqueFunction(function=_launch_setup),
     ])

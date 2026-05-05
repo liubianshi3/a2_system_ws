@@ -114,7 +114,7 @@ function createEmptySnapshot(): DashboardSnapshot {
     navigation: {
       state: "idle",
       message: null,
-      backend: "pose_topic_3d",
+      backend: "auto",
       action_server_ready: false,
       goal: null,
       feedback: {},
@@ -465,7 +465,7 @@ export default function App() {
 
   const selectedMap = maps.find((map) => map.map_id === selectedMapId) ?? null;
   const has3DViewerData = snapshot.pointcloud.loaded || Boolean(selectedMap?.has_pointcloud_3d);
-  const navigationUses3D = snapshot.navigation.backend === "pose_topic_3d" || has3DViewerData;
+  const navigationUses3D = snapshot.navigation.backend === "pose_topic_3d";
   const localizationReason =
     snapshot.status.localization_status.reason ?? snapshot.status.localization_status.state ?? null;
   const rosRuntimeHealthy = snapshot.health.ros_thread_alive && snapshot.health.ros_connected;
@@ -481,21 +481,21 @@ export default function App() {
     [navigationMessage, snapshot.navigation],
   );
   const canSendGoal =
-    stack?.mode === "navigation" &&
+    stack?.mode?.startsWith("navigation") &&
     localizationReady &&
     snapshot.health.action_server_ready &&
     poseFresh &&
     (navigationUses3D ? snapshot.pose.available : snapshot.map.loaded);
   const canSetInitialPose =
     rosRuntimeHealthy &&
-    stack?.mode === "navigation" &&
+    stack?.mode?.startsWith("navigation") &&
     (navigationUses3D ? selectedMap !== null || has3DViewerData : snapshot.map.loaded) &&
     snapshot.navigation.state !== "navigating";
   const stackTransitioning = stackBusy || stack?.mode === "starting" || stack?.mode === "stopping";
   const startMappingReason =
     stackTransitioning
       ? "栈正在启动或停止，暂时不能切换模式"
-      : stack?.mode === "mapping"
+      : stack?.mode?.startsWith("mapping")
         ? "当前已经在建图模式"
         : "会停止当前栈并切到建图链";
   const startNavigationReason =
@@ -503,13 +503,13 @@ export default function App() {
       ? "栈正在启动或停止，暂时不能切换模式"
       : !selectedMapId
         ? "请先选择一张导航地图"
-        : stack?.mode === "navigation"
+        : stack?.mode?.startsWith("navigation")
           ? "当前已经在导航模式"
           : "会停止当前栈并加载所选地图进入导航";
   const saveMapReason =
     stackTransitioning
       ? "栈正在启动或停止，暂时不能保存地图"
-      : stack?.mode !== "mapping"
+      : !stack?.mode?.startsWith("mapping")
         ? "只有建图模式下才能保存当前地图"
         : !saveMapId
           ? "请先填写地图名"
@@ -553,6 +553,10 @@ export default function App() {
     }
     if (viewMode === "3d" && has3DViewerData) {
       return "3d";
+    }
+    // 2D-first: if /map is available, prefer 2D mainline view even when 3D assets exist.
+    if (snapshot.map.loaded) {
+      return "2d";
     }
     return has3DViewerData ? "3d" : "2d";
   }, [has3DViewerData, snapshot.map.loaded, viewMode]);

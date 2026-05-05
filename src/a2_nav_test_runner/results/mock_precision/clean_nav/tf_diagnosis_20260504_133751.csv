@@ -1,0 +1,22 @@
+parent_frame,child_frame,timestamp,data_source,x,y,z,yaw,available,error
+map,odom,1777873071.373551,mock_navigation_test,,,,,False,"""map"" passed to lookupTransform argument target_frame does not exist. "
+odom,base_link,1777873071.5348485,mock_navigation_test,,,,,False,"""odom"" passed to lookupTransform argument target_frame does not exist. "
+map,base_link,1777873071.696289,mock_navigation_test,,,,,False,"""map"" passed to lookupTransform argument target_frame does not exist. "
+map,base_footprint,1777873071.8572524,mock_navigation_test,,,,,False,"""map"" passed to lookupTransform argument target_frame does not exist. "
+base_link,base_footprint,1777873072.0182498,mock_navigation_test,,,,,False,"""base_footprint"" passed to lookupTransform argument source_frame does not exist. "
+base_link,lidar,1777873072.1796331,mock_navigation_test,,,,,False,"""lidar"" passed to lookupTransform argument source_frame does not exist. "
+base_link,imu_link,1777873072.1797578,mock_navigation_test,0.0,0.0,0.0,0.0,True,
+map,odom,1777873072.380637,mock_navigation_test,-0.0017513730015560553,0.019682787840917284,0.0,-0.003061179771868812,True,
+odom,base_link,1777873072.3806996,mock_navigation_test,0.0,0.0,0.0,0.0,True,
+map,base_link,1777873072.3807545,mock_navigation_test,-0.0017513730015560553,0.019682787840917284,0.0,-0.003061179771868812,True,
+map,base_footprint,1777873072.5424733,mock_navigation_test,,,,,False,"""base_footprint"" passed to lookupTransform argument source_frame does not exist. "
+base_link,base_footprint,1777873072.7040048,mock_navigation_test,,,,,False,"""base_footprint"" passed to lookupTransform argument source_frame does not exist. "
+base_link,lidar,1777873072.8655748,mock_navigation_test,,,,,False,"""lidar"" passed to lookupTransform argument source_frame does not exist. "
+base_link,imu_link,1777873072.8657022,mock_navigation_test,0.0,0.0,0.0,0.0,True,
+map,odom,1777873073.0666318,mock_navigation_test,-0.008323229491269969,-0.0016018340046237015,0.0,-0.0001742767411668184,True,
+odom,base_link,1777873073.0667007,mock_navigation_test,0.0,0.0,0.0,0.0,True,
+map,base_link,1777873073.0667553,mock_navigation_test,-0.008323229491269969,-0.0016018340046237015,0.0,-0.0001742767411668184,True,
+map,base_footprint,1777873073.228351,mock_navigation_test,,,,,False,"""base_footprint"" passed to lookupTransform argument source_frame does not exist. "
+base_link,base_footprint,1777873073.3901758,mock_navigation_test,,,,,False,"""base_footprint"" passed to lookupTransform argument source_frame does not exist. "
+base_link,lidar,1777873073.55177,mock_navigation_test,,,,,False,"""lidar"" passed to lookupTransform argument source_frame does not exist. "
+base_link,imu_link,1777873073.551923,mock_navigation_test,0.0,0.0,0.0,0.0,True,

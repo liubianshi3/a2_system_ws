@@ -1,0 +1,8 @@
+base_frame_id: base_link
+data_source: mock_navigation_test
+global_frame_id: map
+odom_frame_id: odom
+publish_hz: 10.0
+scenario: runner_tolerance_issue
+scenarios_yaml: src/a2_nav_test_runner/config/mock_precision_scenarios.yaml
+use_sim_time: false

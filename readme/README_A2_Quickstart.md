@@ -28,7 +28,13 @@ ssh unitree@192.168.31.49
 eth0
 ```
 
-`real1` 在这里指的就是这条真实启动命令最终拉起的整套真实栈：
+`real1` 在这里默认指的是 **2D 导航主线**：
+
+- `mapping_2d`：JT128 点云 -> `/scan` -> `slam_toolbox` -> `/map`
+- `navigation_2d`：`/map + /scan + /odom` -> `AMCL` -> Nav2 `/navigate_to_pose`
+- `navigation_3d_backup`：保留的 3D 备用导航链，不是默认主线
+
+底层真实启动命令最终还是：
 
 ```bash
 /home/unitree/a2_system_ws/install/a2_system/share/a2_system/start_real_stack.sh eth0
@@ -169,7 +175,7 @@ A2_MAP_YAML=/home/unitree/a2_system_ws/runtime/maps/<你的地图目录>/map.yam
 /home/unitree/a2_system_ws/install/a2_system/share/a2_system/start_real_stack.sh eth0
 ```
 
-这条命令会做三件事：
+这条命令默认会进入 `navigation_2d` 模式，并做三件事：
 
 1. 检查真实网络接口
 2. 配置真实 DDS/网络环境
@@ -179,6 +185,25 @@ A2_MAP_YAML=/home/unitree/a2_system_ws/runtime/maps/<你的地图目录>/map.yam
 
 - `amcl`
 - 只有明确排障或临时兼容时，才应手动覆盖 `A2_REAL_LOCALIZATION_MODE`
+
+### 3.4 2D 建图模式
+
+如果当前目标是先建 2D 地图，而不是立刻做 Nav2 导航，主线应进入 `mapping_2d`：
+
+```bash
+A2_ENABLE_NAV2=false \
+/home/unitree/a2_system_ws/install/a2_system/share/a2_system/start_real_stack.sh eth0
+```
+
+这个模式的契约是：
+
+- 会启动 `pointcloud_to_laserscan`
+- 会启动 `slam_toolbox`
+- Web 应优先看到 `/map`
+- 不要求 `/amcl_pose`
+- 允许在安全前提下移动建图
+
+不要把 `mapping_2d` 和 `navigation_2d` 混成一套。前者是建图，后者是加载地图后的导航。
 
 启动成功后，终端通常会打印：
 
@@ -212,7 +237,7 @@ pgrep -af "bringup.launch.py|a2_sdk_bridge|a2_control_bridge|goal_bridge|map_ser
 - `velocity_smoother`
 - `lifecycle_manager`
 
-如果这里看到的是 `manual_localization_publisher` 而没有 `amcl`，说明当前不是默认实机复现路径，应先检查 `A2_REAL_LOCALIZATION_MODE` 是否被手动覆盖。
+如果这里看到的是 `manual_localization_publisher` 而没有 `amcl`，说明当前不是默认 `navigation_2d` 主线，应先检查 `A2_REAL_LOCALIZATION_MODE` 是否被手动覆盖。
 
 ### 4.2 再看系统状态
 

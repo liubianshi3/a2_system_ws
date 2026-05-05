@@ -1,0 +1,29 @@
+parent_frame,child_frame,timestamp,data_source,x,y,z,yaw,available,error
+map,odom,1777873287.708316,mock_navigation_test,0.2602944337497932,-0.03244928554181716,0.0,0.011861136816430072,True,
+odom,base_link,1777873287.708351,mock_navigation_test,0.0,0.0,0.0,0.0,True,
+map,base_link,1777873287.7083802,mock_navigation_test,0.2602944337497932,-0.03244928554181716,0.0,0.011861136816430072,True,
+map,base_footprint,1777873287.86953,mock_navigation_test,,,,,False,"""base_footprint"" passed to lookupTransform argument source_frame does not exist. "
+base_link,base_footprint,1777873288.0307765,mock_navigation_test,,,,,False,"""base_footprint"" passed to lookupTransform argument source_frame does not exist. "
+base_link,lidar,1777873288.1919563,mock_navigation_test,,,,,False,"""lidar"" passed to lookupTransform argument source_frame does not exist. "
+base_link,imu_link,1777873288.3530889,mock_navigation_test,,,,,False,"""imu_link"" passed to lookupTransform argument source_frame does not exist. "
+map,odom,1777873288.5538456,mock_navigation_test,0.052712534684304035,0.05289874160011534,0.0,0.01611626031398779,True,
+odom,base_link,1777873288.5538836,mock_navigation_test,0.0,0.0,0.0,0.0,True,
+map,base_link,1777873288.553911,mock_navigation_test,0.052712534684304035,0.05289874160011534,0.0,0.01611626031398779,True,
+map,base_footprint,1777873288.715221,mock_navigation_test,,,,,False,"""base_footprint"" passed to lookupTransform argument source_frame does not exist. "
+base_link,base_footprint,1777873288.8765483,mock_navigation_test,,,,,False,"""base_footprint"" passed to lookupTransform argument source_frame does not exist. "
+base_link,lidar,1777873289.0375903,mock_navigation_test,,,,,False,"""lidar"" passed to lookupTransform argument source_frame does not exist. "
+base_link,imu_link,1777873289.1987498,mock_navigation_test,,,,,False,"""imu_link"" passed to lookupTransform argument source_frame does not exist. "
+map,odom,1777873289.3993633,mock_navigation_test,0.052712534684304035,0.05289874160011534,0.0,0.01611626031398779,True,
+odom,base_link,1777873289.3993995,mock_navigation_test,0.0,0.0,0.0,0.0,True,
+map,base_link,1777873289.399425,mock_navigation_test,0.052712534684304035,0.05289874160011534,0.0,0.01611626031398779,True,
+map,base_footprint,1777873289.3994496,mock_navigation_test,0.052712534684304035,0.05289874160011534,0.0,0.01611626031398779,True,
+base_link,base_footprint,1777873289.399473,mock_navigation_test,0.0,0.0,0.0,0.0,True,
+base_link,lidar,1777873289.3994958,mock_navigation_test,0.1,0.0,0.0,0.0,True,
+base_link,imu_link,1777873289.3995197,mock_navigation_test,0.0,0.0,0.0,0.0,True,
+map,odom,1777873289.6003077,mock_navigation_test,-0.04519073105916155,-0.09248310224681595,0.0,-0.017248449459078313,True,
+odom,base_link,1777873289.6003644,mock_navigation_test,0.0,0.0,0.0,0.0,True,
+map,base_link,1777873289.6004057,mock_navigation_test,-0.04519073105916155,-0.09248310224681595,0.0,-0.017248449459078313,True,
+map,base_footprint,1777873289.6004486,mock_navigation_test,-0.04519073105916155,-0.09248310224681595,0.0,-0.017248449459078313,True,
+base_link,base_footprint,1777873289.600488,mock_navigation_test,0.0,0.0,0.0,0.0,True,
+base_link,lidar,1777873289.6005251,mock_navigation_test,0.1,0.0,0.0,0.0,True,
+base_link,imu_link,1777873289.6005514,mock_navigation_test,0.0,0.0,0.0,0.0,True,

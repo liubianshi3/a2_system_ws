@@ -330,7 +330,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
         native_save: dict | None = None
         mapping_profile = stack_controller.mapping_source_profile()
         try:
-            if stack_controller.status().mode == "mapping" and mapping_profile == "native_global_map":
+            if stack_controller.status().mode.startswith("mapping") and mapping_profile == "native_global_map":
                 native_save = await asyncio.to_thread(node.request_native_map_save, request.map_id)
             await asyncio.to_thread(node.save_managed_map, request.map_id)
             if native_save is not None:

@@ -209,6 +209,7 @@ class RosBridgeNode(Node):
         self._last_primary_pointcloud_monotonic = 0.0
         self._last_fallback_pointcloud_monotonic = 0.0
         self._last_pose_monotonic = 0.0
+        self._last_pose_goal_status_monotonic = 0.0
         self._active_pose_goal: NavigationGoal | None = None
         self._active_pose_goal_started_at: float | None = None
         self._native_slam_response_cv = threading.Condition()
@@ -267,7 +268,7 @@ class RosBridgeNode(Node):
                 "unitree_api.msg.Request is unavailable. Native SLAM commands will be disabled."
             )
         self.action_client = None
-        if self.config.navigation.backend == "nav2" and NavigateToPose is not None:
+        if self.config.navigation.backend in ("nav2", "auto") and NavigateToPose is not None:
             self.action_client = ActionClient(self, NavigateToPose, self.config.navigation.action_name)
         if self.config.navigation.backend == "nav2" and self.action_client is None:
             self.get_logger().warning("nav2_msgs.action.NavigateToPose is unavailable. Navigation controls will be disabled.")
@@ -816,7 +817,8 @@ class RosBridgeNode(Node):
             feedback["controller_status"] = status.raw
 
         with self._lock:
-            if self.config.navigation.backend != "pose_topic_3d":
+            self._last_pose_goal_status_monotonic = time.monotonic()
+            if self._resolved_navigation_backend() != "pose_topic_3d":
                 return
             self.navigation.action_server_ready = True
             self.navigation.backend = "pose_topic_3d"
@@ -987,10 +989,40 @@ class RosBridgeNode(Node):
         self._publish("camera", dump_model(frame))
         self._publish("health", self.get_health_dict())
 
+    def _resolved_navigation_backend(self) -> str:
+        """Resolve the effective navigation backend.
+
+        - ``nav2`` / ``pose_topic_3d``: use the configured backend as-is.
+        - ``auto``: prefer Nav2 when the action client exists and the server
+          is ready. Only fall back to ``pose_topic_3d`` when a live 3D pose-goal
+          controller status stream has been observed recently.
+        The returned value is always ``"nav2"`` or ``"pose_topic_3d"`` —
+        ``"auto"`` is never returned.
+        """
+        configured = self.config.navigation.backend
+        if configured == "nav2":
+            return "nav2"
+        if configured == "pose_topic_3d":
+            return "pose_topic_3d"
+        # configured == "auto"
+        nav2_available = (
+            self.action_client is not None
+            and NavigateToPose is not None
+            and self.action_client.server_is_ready()
+        )
+        if nav2_available:
+            return "nav2"
+        pose_topic_3d_active = (
+            self._last_pose_goal_status_monotonic > 0.0
+            and time.monotonic() - self._last_pose_goal_status_monotonic <= 2.0
+        )
+        return "pose_topic_3d" if pose_topic_3d_active else "nav2"
+
     def _publish_health(self) -> None:
         self._update_pose_topic_goal()
+        resolved = self._resolved_navigation_backend()
         with self._lock:
-            if self.config.navigation.backend == "pose_topic_3d":
+            if resolved == "pose_topic_3d":
                 self.health.action_server_ready = True
                 self.navigation.backend = "pose_topic_3d"
                 self.navigation.action_server_ready = True
@@ -1006,7 +1038,7 @@ class RosBridgeNode(Node):
             active_goal = deep_copy_model(self._active_pose_goal)
             started_at = self._active_pose_goal_started_at
             pose = deep_copy_model(self.pose)
-        if self.config.navigation.backend != "pose_topic_3d" or active_goal is None:
+        if self._resolved_navigation_backend() != "pose_topic_3d" or active_goal is None:
             return
         if started_at is None:
             started_at = time.monotonic()
@@ -1153,7 +1185,7 @@ class RosBridgeNode(Node):
                 raise RosBridgeError("地图尚未加载完成")
             if self._active_goal_handle is not None or self._active_pose_goal is not None:
                 raise RosBridgeError("已有导航任务正在执行")
-            if self.config.navigation.backend == "pose_topic_3d":
+            if self._resolved_navigation_backend() == "pose_topic_3d":
                 return self._send_pose_topic_goal(request.goal)
             if self.action_client is None or NavigateToPose is None:
                 raise RosBridgeError("NavigateToPose action client 不可用")
@@ -1282,7 +1314,7 @@ class RosBridgeNode(Node):
 
     def set_initial_pose(self, request: InitialPoseRequest) -> dict[str, Any]:
         with self._navigation_lock:
-            uses_pose_topic_3d = self.config.navigation.backend == "pose_topic_3d"
+            uses_pose_topic_3d = self._resolved_navigation_backend() == "pose_topic_3d"
             if not uses_pose_topic_3d and not self.map_snapshot.loaded:
                 raise RosBridgeError("地图尚未加载完成")
 
@@ -1381,7 +1413,7 @@ class RosBridgeNode(Node):
 
     def cancel_navigation(self) -> NavigationTaskState:
         with self._navigation_lock:
-            if self.config.navigation.backend == "pose_topic_3d":
+            if self._resolved_navigation_backend() == "pose_topic_3d":
                 if self._active_pose_goal is None:
                     self._publish_pose_topic_stop("cancel_without_active_goal")
                     with self._lock:

@@ -3,8 +3,8 @@ safety_supervisor:
     lidar_topic: /jt128/front/points
     robot_state_topic: /robot_state
     map_topic: /map
-    map_representation: pointcloud_map_3d
-    require_map: false
+    map_representation: occupancy_grid_2d
+    require_map: true
     localization_status_topic: /a2/localization_ok
     allow_motion_topic: /a2/allow_motion
     map_ready_topic: /a2/map_ready
