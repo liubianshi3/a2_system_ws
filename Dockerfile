@@ -1,5 +1,5 @@
 # === Stage 1: Build web frontend ===
-FROM docker.m.daocloud.io/library/node:20-bookworm-slim AS web-build
+FROM registry.cn-hangzhou.aliyuncs.com/linuxsuren/node:20-bookworm AS web-build
 WORKDIR /web
 
 COPY web_console/frontend/package*.json ./
@@ -9,7 +9,7 @@ COPY web_console/frontend/ ./
 RUN npm run build
 
 # === Stage 2: Runtime image ===
-FROM docker.m.daocloud.io/library/ros:humble-ros-base-jammy
+FROM registry.cn-hangzhou.aliyuncs.com/linuxsuren/ros:humble-ros-base-jammy
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
