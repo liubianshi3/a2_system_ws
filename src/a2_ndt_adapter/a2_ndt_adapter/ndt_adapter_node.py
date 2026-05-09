@@ -4,8 +4,10 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import PoseWithCovarianceStamped, TransformStamped, PoseStamped
 from nav_msgs.msg import Odometry
-from sensor_msgs.msg import PointCloud2
+from sensor_msgs.msg import PointCloud2, PointField
+from sensor_msgs_py import point_cloud2
 from std_msgs.msg import String
+from autoware_internal_debug_msgs.msg import Int32Stamped
 from std_srvs.srv import SetBool
 from tf2_ros import TransformBroadcaster
 from autoware_map_msgs.srv import GetDifferentialPointCloudMap
@@ -125,13 +127,35 @@ class A2NdtAdapter(Node):
         self.declare_parameter('ndt_pose_topic', 'ndt_pose_with_covariance')
         self.declare_parameter('ndt_initial_pose_topic', 'ekf_pose_with_covariance')
         self.declare_parameter('ndt_score_topic', 'transform_probability')
+        self.declare_parameter('score_topic', 'transform_probability')
+        self.declare_parameter('iteration_topic', 'iteration_num')
+        self.declare_parameter('score_threshold', 0.5)
+        self.declare_parameter('score_min_is_good', True)
+        self.declare_parameter('odom_timeout_sec', 1.0)
+        self.declare_parameter('score_timeout_sec', 1.0)
+        self.declare_parameter('max_map_to_odom_translation_step', 1.0)
+        self.declare_parameter('max_map_to_odom_rotation_step_deg', 20.0)
+        self.declare_parameter('map_service_min_radius', 1.0)
+        self.declare_parameter('map_service_max_radius', 150.0)
+        self.declare_parameter('map_service_margin_m', 5.0)
+        self.declare_parameter('map_service_max_points', 200000)
+        self.declare_parameter('map_cell_id_prefix', 'a2_map_cell')
         
         # State
         self.last_odom_to_base = None
         self.map_to_odom = np.eye(4)
         self.has_seed = False
         self.last_score = -1.0
+        self.last_score_stamp = None
+        self.last_odom_stamp = None
+        self.last_iteration_num = None
         self.cached_map = None
+        self.cached_map_frame = self.get_parameter('map_frame').value
+        self.cached_map_points = np.empty((0, 3), dtype=np.float32)
+        self.map_parse_error = ''
+        self.last_map_request = 'none'
+        self.last_map_cell_id = 'none'
+        self.last_map_returned_points = 0
         
         # Publishers
         self.pose_pub = self.create_publisher(PoseWithCovarianceStamped, self.get_parameter('pose_topic').value, 10)
@@ -214,7 +238,7 @@ class A2NdtAdapter(Node):
         tf_msg.transform.rotation.y = qy
         tf_msg.transform.rotation.z = qz
         tf_msg.transform.rotation.w = qw
-        self.tf_broadcaster.sendTransform(tf_msg)
+        # self.tf_broadcaster.sendTransform(tf_msg) # EKF now handles TF publishing
 
         # Relay to A2 interface
         self.pose_pub.publish(msg)

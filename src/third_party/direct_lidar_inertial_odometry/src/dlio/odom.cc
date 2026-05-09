@@ -762,6 +762,10 @@ void dlio::OdomNode::initializeDLIO() {
 void dlio::OdomNode::callbackPointCloud(const sensor_msgs::PointCloud2ConstPtr& pc) {
 
   std::unique_lock<decltype(this->main_loop_running_mutex)> lock(main_loop_running_mutex);
+  if (this->main_loop_running) {
+    lock.unlock();
+    return;
+  }
   this->main_loop_running = true;
   lock.unlock();
 

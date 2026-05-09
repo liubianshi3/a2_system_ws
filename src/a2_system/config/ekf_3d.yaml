@@ -46,10 +46,9 @@ ekf_filter_node:
        false, false, false]
 
     # ── Output ──────────────────────────────────────────────────
-    # publish_tf: false because the NDT adapter already publishes
-    # map→odom. The EKF output (odometry/filtered = map→base_link)
-    # is remapped to /ekf_pose_with_covariance via a small bridge.
-    publish_tf: false
+    # publish_tf: true because EKF is now the official source of
+    # map→odom.
+    publish_tf: true
     publish_acceleration: false
     print_diagnostics: false
 

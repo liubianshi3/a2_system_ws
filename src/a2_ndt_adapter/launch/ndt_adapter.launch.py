@@ -29,7 +29,6 @@ def generate_launch_description():
             ],
             remappings=[
                 ('points_raw', '/jt128/front/points'),
-                ('ekf_pose_with_covariance', '/a2/ndt/open_loop_pose'),
             ],
             output='screen'
         ),
@@ -46,10 +45,10 @@ def generate_launch_description():
                 'map_topic': '/a2/map/pointcloud_3d',
                 'pose_topic': '/a2/relocalization/pose',
                 'status_topic': '/a2/relocalization/status',
-                'score_topic': 'transform_probability',
-                'score_threshold': 0.5,
-                'score_min_is_good': True,
-                'ndt_initial_pose_topic': '/a2/ndt/open_loop_pose',
+                'score_topic': 'nearest_voxel_transformation_likelihood',
+                'score_threshold': 2.3,
+                'score_min_is_good': False,
+                'ndt_initial_pose_topic': '/a2/ndt/adapter_ignored_initial_pose',
             }],
             output='screen'
         )

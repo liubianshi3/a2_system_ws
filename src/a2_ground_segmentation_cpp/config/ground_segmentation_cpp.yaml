@@ -20,10 +20,10 @@ ground_segmentation_cpp:
 
     # -- traversability grid ---------------------------------------------
     traversability_resolution: 0.1
-    traversability_width: 400
-    traversability_height: 400
-    traversability_origin_x: -20.0
-    traversability_origin_y: -20.0
+    traversability_width: 2000
+    traversability_height: 2000
+    traversability_origin_x: -100.0
+    traversability_origin_y: -100.0
     max_traversable_slope_deg: 20.0
     traversability_publish_hz: 1.0
     traversability_height_ema_alpha: 0.3
