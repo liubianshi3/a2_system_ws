@@ -1,96 +1,153 @@
-# A2 System Workspace
+# 机器狗导航与任务系统（ROS 2 Humble）
 
-## 论文实验复现说明
+该仓库是一个面向 Unitree 系列机器狗的主机侧 ROS 2 Humble 工作区，提供“传感器接入 → 定位/建图 → Nav2 导航 → 任务编排/安全门控 → Web Console”的一体化链路。
 
-### 1. 项目说明
+当前工程历史上以 A2 为基线，但核心接口已按“标准 ROS 话题（/cmd_vel、/odom、/imu、/tf、点云）+ 可替换的桥接/传感器 profile”组织，支持在不改代码的情况下切换不同机器狗与不同型号雷达，并便于继续扩展更多型号。
 
-本仓库中的 `inspection_task_allocator` 模块用于验证四足机器人动态巡检任务分配算法，支撑论文《融合优先级与路径代价的四足机器人动态巡检任务分配方法》的仿真实验。该方法的核心思想是融合任务优先级、区域风险、异常反馈、A* 路径距离、路径复杂度和能耗代价，从而在动态巡检场景中生成更合理的任务执行顺序。
+## 核心模块
 
-### 2. 模块结构
+- Bringup：统一启动入口与编排 [a2_bringup](file:///Users/rick/Workspace/feishu/device-navigation/src/a2_bringup)
+- 机器人桥接（状态/控制）
+  - 状态采集：`a2_sdk_bridge` → `/a2/raw_state`
+  - 状态规范化：`a2_state_publisher` → `/robot_state`、`/odom`、`/imu/data`、TF
+  - 速度控制：`a2_control_bridge` 订阅 `/cmd_vel` 并做限速/超时停车/安全门控
+- 传感器接入与适配：`sensor_sync`（点云守护、点云转发、点云→scan）
+- 定位/重定位：`localization_manager`（AMCL / 手动定位 / 3D 重定位门控）
+- 地图/SLAM：`map_manager`、`slam_manager`
+- Nav2 集成：`nav2_integration`（goal bridge、3D 目标控制）
+- 安全门控：`safety_manager`（雷达/状态/地图/定位就绪判断 → `/a2/allow_motion`、`/a2/estop`）
+- 系统级任务编排：`a2_system`（task_manager、运行脚本、工具与文档）
+- Web Console：`web_console`（前后端、ROS 桥接）
 
-`inspection_task_allocator` 包中主要文件及作用如下：
+工程内部“唯一权威”的接口约定文档在：[interface_contracts.md](file:///Users/rick/Workspace/feishu/device-navigation/src/a2_system/docs/interface_contracts.md)
 
-- `task_model.py`：定义巡检任务数据结构。
-- `astar_planner.py`：实现基于二维栅格地图的 A* 路径规划。
-- `task_allocator.py`：实现 Proposed 方法，即融合多因素代价的动态任务分配策略。
-- `baseline_methods.py`：实现对比算法，包括 `FS`、`NNF` 和 `AStarOnly`。
-- `demo_simulation.py`：单次仿真运行入口，用于快速验证方法效果。
-- `experiment_runner.py`：批量实验运行入口，自动生成多组对比实验结果。
-- `analyze_results.py`：统计实验结果并生成论文表格所需的汇总数据。
+## 支持矩阵（可扩展）
 
-### 3. 单次仿真运行方式
+- 机器狗
+  - `a2`：现有默认基线
+  - `go2_air`：已增加 profile（控制/状态/限速/TF 基高）
+  - `b2`：已增加 profile（控制/状态/限速/TF 基高）
+- 雷达
+  - `hesai_jt128_front`：现有默认基线（专用 Hesai ROS driver）
+  - `unitree_go2_air_native`：Go2 Air 内置点云输入（external_pointcloud + relay）
+  - `robosense_rs_helios_32`：RoboSense RS-Helios-32 外部点云输入（external_pointcloud + relay）
+- 深度相机
+  - `realsense_d435i`：Intel RealSense D435i（external_pointcloud，默认使用 `/camera/depth/color/points`）
 
-运行命令如下：
+扩展方式见本文“新增型号”章节。
 
-```bash
-python3 src/inspection_task_allocator/inspection_task_allocator/demo_simulation.py
-```
+## 快速开始
 
-该脚本会在二维栅格地图上生成巡检任务并执行单次仿真，输出内容包括：
-
-- 任务执行序列
-- 总路径长度
-- 总巡检时间
-- 高优先级任务平均响应时间
-
-### 4. 批量实验运行方式
-
-运行命令如下：
-
-```bash
-python3 src/inspection_task_allocator/inspection_task_allocator/experiment_runner.py
-```
-
-批量实验设置如下：
-
-- 地图规模：30 × 30
-- 障碍物比例：0.1、0.2、0.3
-- 任务数量：10、20、30
-- 每组重复 20 次
-- 对比方法：`FS`、`NNF`、`AStarOnly`、`Proposed`
-- 同一 `seed` 下四种方法使用相同地图和任务点
-
-### 5. 结果统计方式
-
-运行命令如下：
+### 构建
 
 ```bash
-python3 src/inspection_task_allocator/inspection_task_allocator/analyze_results.py
+cd <workspace>
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install
+source install/setup.bash
 ```
 
-统计脚本会基于批量实验结果生成以下文件：
+### 启动（示例）
 
-- `src/inspection_task_allocator/results/summary_by_task_num.csv`
-- `src/inspection_task_allocator/results/summary_by_obstacle_ratio.csv`
-- `src/inspection_task_allocator/results/summary_overall.csv`
-
-### 6. 方法说明
-
-四种方法定义如下：
-
-- `FS`：固定顺序巡检，按照任务列表原始顺序依次执行。
-- `NNF`：最近邻优先，每轮选择当前机器人位置到任务点 A* 路径长度最短的未完成任务。
-- `AStarOnly`：仅基于 A* 路径综合代价选择任务，综合代价为路径长度、转弯数和障碍邻近数量的加权和。
-- `Proposed`：融合任务优先级、区域风险、异常反馈以及路径代价的动态任务分配方法。
-
-### 7. 注意事项
-
-当前实验基于二维栅格仿真环境，主要用于论文方法验证与对比分析。后续可进一步接入 ROS2、Nav2 以及真实四足机器人平台，以完成实机验证与系统级联调。
-
-### 8. 自适应 A-RH-PADS 实验
-
-Route B 新增 `A-RH-PADS`（Adaptive Receding-Horizon Priority-Aware Dynamic Scheduler，自适应滚动时域优先级感知动态调度算法）。该方法将任务调度目标拆成响应收益 `R(Q_t)` 与运动代价 `C(Q_t)`，并根据当前任务紧急度压力 `U_t`、异常压力 `A_t` 和路径压力 `D_t` 动态计算 `lambda_t`。`lambda_t` 越大，调度越偏响应优先；`lambda_t` 越小，调度越偏运动代价控制。
-
-该方法的目标不是追求路径最短，而是在任务响应与运动代价之间做动态权衡。原 `RH-PADS` / `RH-v2-Light` 保留为固定权重基线。小车运动学实验仅是二维栅格路径加差速小车跟踪的运动学仿真，不是 Gazebo、Nav2 或真实机器人实验。
-
-运行命令：
+默认（A2 + JT128）：
 
 ```bash
-python3 inspection_task_allocator_minimal/adaptive_rh_pads_main_experiment.py
-python3 inspection_task_allocator_minimal/adaptive_rh_pads_abnormal_experiment.py
-python3 inspection_task_allocator_minimal/adaptive_rh_pads_ablation_experiment.py
-python3 inspection_task_allocator_minimal/adaptive_vehicle_sim_experiment.py
-python3 inspection_task_allocator_minimal/adaptive_rh_pads_significance.py
-python3 inspection_task_allocator_minimal/export_adaptive_rh_pads_tables.py
-python3 inspection_task_allocator_minimal/export_adaptive_rh_pads_figures.py
+ros2 launch a2_bringup bringup.launch.py \
+  runtime_mode:=real \
+  network_interface:=<wired_iface>
 ```
+
+Go2 Air + 内置雷达（点云 topic 默认 `/utlidar/cloud`，按实际设备调整）：
+
+```bash
+ros2 launch a2_bringup bringup.launch.py \
+  runtime_mode:=real \
+  network_interface:=<wired_iface> \
+  robot:=go2_air \
+  lidar:=unitree_go2_air_native
+
+B2 + RoboSense RS-Helios-32（点云 topic 默认 `/rslidar_points`，按实际设备调整）：
+
+```bash
+ros2 launch a2_bringup bringup.launch.py \
+  runtime_mode:=real \
+  network_interface:=<wired_iface> \
+  robot:=b2 \
+  lidar:=robosense_rs_helios_32
+```
+
+D435i 深度相机加入导航避障（Nav2 voxel_layer 额外 observation source）：
+
+```bash
+ros2 launch a2_bringup bringup.launch.py \
+  runtime_mode:=real \
+  network_interface:=<wired_iface> \
+  robot:=go2_air \
+  lidar:=unitree_go2_air_native \
+  camera:=realsense_d435i
+```
+```
+
+Nav2 2D 导航（需要已保存的 2D map.yaml）：
+
+```bash
+ros2 launch a2_bringup bringup.launch.py \
+  runtime_mode:=real \
+  network_interface:=<wired_iface> \
+  enable_nav2_bringup:=true \
+  real_localization_mode:=amcl \
+  map:=/abs/path/to/map.yaml
+```
+
+## Robot/LiDAR Profile 机制
+
+本仓库通过“可选配置文件 + launch 参数注入”的方式实现多机型/多传感器复用：
+
+- 选择机器狗 profile：`robot:=<name>`，对应配置文件目录 `src/a2_system/config/robots/<name>.yaml`
+- 选择雷达 profile：`lidar:=<name>`，对应配置文件目录 `src/a2_system/config/lidars/<name>.yaml`
+- 高级用法（直接指定路径）：
+  - `robot_config:=/abs/path/to/robot.yaml`
+  - `real_lidar_config:=/abs/path/to/lidar.yaml`
+
+当 profile 被选择时：
+
+- `a2_sdk_bridge`、`a2_control_bridge`、`a2_state_publisher` 会加载 profile 中对应节点的参数（覆盖默认值）
+- `sensors.launch.py` 会根据 `real_lidar_config` 决定点云接入方式，并从 `robot_config` 读取 `static_tf_manager.base_height`
+- `nav2.launch.py` 会按当前雷达的“实际消费 topic”动态改写 `nav2_stack.yaml` 中 costmap voxel_layer 的点云 topic
+
+## 新增型号（扩展指南）
+
+### 新增一款机器狗
+
+1. 新建 `src/a2_system/config/robots/<robot>.yaml`
+2. 按需覆盖以下节点参数（只写你要改的字段即可）
+   - `a2_sdk_bridge.ros__parameters.*`：例如 `sport_state_topic`、`timer_hz`
+   - `a2_control_bridge.ros__parameters.*`：例如 `max_linear_x/max_linear_y/max_yaw_rate`
+   - `static_tf_manager.ros__parameters.base_height`：base_footprint → base_link 的高度
+3. 启动时指定：`robot:=<robot>`
+
+### 新增一款雷达/点云来源
+
+1. 新建 `src/a2_system/config/lidars/<lidar>.yaml`
+2. 关键字段（都在 `real_lidar.ros__parameters` 下）
+   - `driver_mode`
+     - `dedicated_hesai_ros_driver`：由工程启动外部 Hesai driver（现有 JT128 模式）
+     - `external_pointcloud`：外部已产出 `PointCloud2`，工程只做 relay/守护/scan 投影
+   - `input_topic`：外部点云输入（如 Go2 内置点云话题）
+   - `output_topic`：工程内部统一消费点云（建议与现有栈保持一致，或配合 Nav2 动态改写机制）
+   - `output_frame_id`：需要强制写入的 `header.frame_id`（配合静态 TF）
+   - `restamp_on_receive`：必要时重打时间戳（优先用于修复“点云时间戳异常导致 TF/代价地图不可用”）
+3. 启动时指定：`lidar:=<lidar>`
+
+## 关键话题（最常用）
+
+- 控制：`/cmd_vel`（输入），`/a2/allow_motion`（门控），`/a2/estop`（急停态）
+- 状态：`/robot_state`、`/odom`、`/imu/data`
+- 点云：由当前 `real_lidar_config` 决定（默认栈为 `/jt128/front/points`）
+- 导航：`/navigate_to_pose`（Nav2 action），`/map`（2D），TF（`map→odom→base_link`）
+
+## 相关文档
+
+- 架构：[architecture.md](file:///Users/rick/Workspace/feishu/device-navigation/src/a2_system/docs/architecture.md)
+- 接口约定：[interface_contracts.md](file:///Users/rick/Workspace/feishu/device-navigation/src/a2_system/docs/interface_contracts.md)
+- 运维手册：[operations_runbook.md](file:///Users/rick/Workspace/feishu/device-navigation/src/a2_system/docs/operations_runbook.md)

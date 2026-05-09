@@ -1,5 +1,5 @@
-ARG NODE_IMAGE=node:20-bookworm-slim
-ARG ROS_IMAGE=ros:humble-ros-base-jammy
+ARG NODE_IMAGE=registry.cn-hangzhou.aliyuncs.com/linuxsuren/node:20-bookworm
+ARG ROS_IMAGE=registry.cn-hangzhou.aliyuncs.com/linuxsuren/ros:humble-ros-base-jammy
 
 FROM ${NODE_IMAGE} AS web-build
 WORKDIR /web

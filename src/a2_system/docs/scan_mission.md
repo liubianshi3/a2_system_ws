@@ -55,6 +55,8 @@ ros2 launch a2_bringup scan_mission.launch.py dry_run:=true \
   waypoints_file:=/home/unitree/a2_system_ws/src/a2_system/config/scan_waypoints.example.yaml
 ```
 
+## Map Validation
+
 Dry-run behavior:
 
 - loads and validates the route file
@@ -63,6 +65,16 @@ Dry-run behavior:
 - does not send `NavigateToPose` goals
 - does not save a map
 - writes the same Markdown report format
+
+## Map Validation
+
+The mission validates each waypoint against the latest `/map` occupancy grid before executing navigation goals:
+
+- rejects waypoints landing on occupied cells (`occupied_threshold`)
+- rejects waypoints that violate the configured clearance radius (`min_clearance_cells`)
+- rejects unknown cells when `allow_unknown_cells` is false
+
+This validation runs in both dry-run and real runs when `validate_waypoints_against_map` is enabled.
 
 ## Real Run
 
