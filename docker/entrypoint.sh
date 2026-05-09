@@ -4,7 +4,7 @@ set -euo pipefail
 export A2_WORKSPACE="${A2_WORKSPACE:-/opt/a2_system_ws}"
 export CONFIG_PATH="${CONFIG_PATH:-${A2_WORKSPACE}/web_console/backend/config.docker.yaml}"
 export LD_LIBRARY_PATH="/opt/unitree_robotics/lib:/opt/unitree_robotics/lib/x86_64:${LD_LIBRARY_PATH:-}"
-export A2_NETWORK_INTERFACE="${A2_NETWORK_INTERFACE:-eth0}"
+export A2_NETWORK_INTERFACE="${A2_NETWORK_INTERFACE:-net1}"
 export RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
 
 mkdir -p "${A2_WORKSPACE}/runtime/maps" "${A2_WORKSPACE}/runtime/logs"
