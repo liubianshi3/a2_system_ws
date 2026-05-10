@@ -57,6 +57,7 @@ COPY docker/a2_sdk_headers/a2/ /opt/unitree_robotics/include/unitree/robot/a2/
 # Copy source code and build
 WORKDIR /opt/a2_system_ws
 COPY src ./src
+COPY proto ./proto
 COPY web_console/backend ./web_console/backend
 COPY web_console/scripts ./web_console/scripts
 COPY web_console/systemd ./web_console/systemd
@@ -82,7 +83,7 @@ RUN chmod +x /usr/local/bin/a2-web-entrypoint \
     && mkdir -p runtime/maps runtime/logs \
     && rm -rf build log
 
-EXPOSE 8080
+EXPOSE 8080 50051
 
 ENTRYPOINT ["/usr/local/bin/a2-web-entrypoint"]
 LABEL description="A2 robot system — self-contained Docker image"

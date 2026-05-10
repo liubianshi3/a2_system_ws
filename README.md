@@ -6,7 +6,7 @@
 
 ## 核心模块
 
-- Bringup：统一启动入口与编排 [a2_bringup](file:///Users/rick/Workspace/feishu/device-navigation/src/a2_bringup)
+- Bringup：统一启动入口与编排 [a2_bringup](./src/a2_bringup)
 - 机器人桥接（状态/控制）
   - 状态采集：`a2_sdk_bridge` → `/a2/raw_state`
   - 状态规范化：`a2_state_publisher` → `/robot_state`、`/odom`、`/imu/data`、TF
@@ -19,7 +19,18 @@
 - 系统级任务编排：`a2_system`（task_manager、运行脚本、工具与文档）
 - Web Console：`web_console`（前后端、ROS 桥接）
 
-工程内部“唯一权威”的接口约定文档在：[interface_contracts.md](file:///Users/rick/Workspace/feishu/device-navigation/src/a2_system/docs/interface_contracts.md)
+工程内部“唯一权威”的接口约定文档在：[interface_contracts.md](./src/a2_system/docs/interface_contracts.md)
+
+## 启动方式总览
+
+- 只跑 ROS（无 Web）：按本文“快速开始 → 构建/启动”走 `colcon build` + `ros2 launch a2_bringup ...`
+- 跑 Web Console（推荐）：先构建 ROS 工作区，再启动 `web_console` 后端（FastAPI），浏览器打开 `http://<机器人IP>:8080`
+- 跑 gRPC（可选）：与 Web Console 后端同进程启动，默认端口 `50051`，通过 `web_console/backend/config*.yaml` 的 `grpc.enabled` 控制
+
+端口约定：
+
+- `8080`：Web Console（HTTP + WebSocket）
+- `50051`：gRPC（当 `grpc.enabled: true`）
 
 ## 支持矩阵（可扩展）
 
@@ -47,7 +58,7 @@ colcon build --symlink-install
 source install/setup.bash
 ```
 
-### 启动（示例）
+### 启动 ROS（示例）
 
 默认（A2 + JT128）：
 
@@ -86,7 +97,6 @@ ros2 launch a2_bringup bringup.launch.py \
   lidar:=unitree_go2_air_native \
   camera:=realsense_d435i
 ```
-```
 
 Nav2 2D 导航（需要已保存的 2D map.yaml）：
 
@@ -98,6 +108,60 @@ ros2 launch a2_bringup bringup.launch.py \
   real_localization_mode:=amcl \
   map:=/abs/path/to/map.yaml
 ```
+
+## 启动 Web Console（HTTP + gRPC）
+
+Web Console 后端会在启动时创建 ROS2 节点并订阅/调用导航相关接口；因此在本机运行时需要先 source ROS 环境与工作区环境。
+
+### 方式 A：本机/主机直接运行（开发最常用）
+
+1) 构建 ROS 工作区（见“快速开始 → 构建”）
+
+2) 安装 Web Console 后端依赖并启动：
+
+```bash
+cd web_console
+./scripts/bootstrap_backend.sh
+./scripts/run_backend.sh
+```
+
+3) 浏览器访问：
+
+```text
+http://<机器人IP>:8080
+```
+
+4) 启用 gRPC（可选）
+
+复制配置并开启 `grpc.enabled`：
+
+```bash
+cp web_console/backend/config.example.yaml web_console/backend/config.yaml
+```
+
+然后在 `web_console/backend/config.yaml` 中设置：
+
+```yaml
+grpc:
+  enabled: true
+  host: 0.0.0.0
+  port: 50051
+```
+
+并通过环境变量指定配置启动（可选）：
+
+```bash
+CONFIG_PATH=web_console/backend/config.yaml ./web_console/scripts/run_backend.sh
+```
+
+### 方式 B：Docker（部署最常用）
+
+Docker 镜像会在容器内构建 ROS2 工作区并启动 Web Console 后端；默认使用 `web_console/backend/config.docker.yaml`，其中已开启 gRPC。
+
+- 构建/运行说明见 [docker/README.md](./docker/README.md)
+- 默认端口：
+  - Web Console：`8080`
+  - gRPC：`50051`
 
 ## Robot/LiDAR Profile 机制
 
@@ -148,6 +212,6 @@ ros2 launch a2_bringup bringup.launch.py \
 
 ## 相关文档
 
-- 架构：[architecture.md](file:///Users/rick/Workspace/feishu/device-navigation/src/a2_system/docs/architecture.md)
-- 接口约定：[interface_contracts.md](file:///Users/rick/Workspace/feishu/device-navigation/src/a2_system/docs/interface_contracts.md)
-- 运维手册：[operations_runbook.md](file:///Users/rick/Workspace/feishu/device-navigation/src/a2_system/docs/operations_runbook.md)
+- 架构：[architecture.md](./src/a2_system/docs/architecture.md)
+- 接口约定：[interface_contracts.md](./src/a2_system/docs/interface_contracts.md)
+- 运维手册：[operations_runbook.md](./src/a2_system/docs/operations_runbook.md)
