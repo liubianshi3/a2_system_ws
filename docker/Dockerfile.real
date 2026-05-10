@@ -65,5 +65,5 @@ RUN chmod +x /usr/local/bin/a2-web-entrypoint \
     && mkdir -p runtime/maps runtime/logs \
     && rm -rf build log
 
-EXPOSE 8080
+EXPOSE 8080 50051
 ENTRYPOINT ["/usr/local/bin/a2-web-entrypoint"]
