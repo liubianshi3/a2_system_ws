@@ -105,6 +105,19 @@ export interface NavigationTaskState {
   updated_at: string | null;
 }
 
+export interface ManualVelocityCommand {
+  linear_x: number;
+  linear_y: number;
+  angular_z: number;
+}
+
+export interface ManualControlResponse {
+  topic: string;
+  command: ManualVelocityCommand;
+  burst_count: number;
+  message: string;
+}
+
 export interface CameraFrame {
   available: boolean;
   topic: string | null;

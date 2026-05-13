@@ -6,7 +6,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from backend.config import load_config
-from backend.models import CameraFrame, DashboardSnapshot, MapMediaEntry, MapMediaListing, TaskRouteStatus, VirtualObstacleListing, VirtualObstacleZone
+from backend.models import (
+    CameraFrame,
+    DashboardSnapshot,
+    ManualVelocityCommand,
+    MapMediaEntry,
+    MapMediaListing,
+    TaskRouteStatus,
+    VirtualObstacleListing,
+    VirtualObstacleZone,
+)
 from backend.stack_control import MAPPING_NODES, NAVIGATION_NODES, STACK_CLEANUP_PATTERNS
 
 
@@ -52,6 +61,29 @@ def test_docker_config_uses_raw_camera_when_compressed_topic_is_absent():
     assert config.camera.enabled is True
     assert config.camera.prefer_compressed is False
     assert config.ros.camera_image_topic == "/camera/image_raw"
+
+
+def test_manual_control_contract_publishes_safe_cmd_vel():
+    root = Path(__file__).resolve().parents[2]
+    config = load_config(root / "backend/config.docker.yaml")
+    command = ManualVelocityCommand(linear_x=0.2, angular_z=0.4)
+
+    assert config.manual_control.enabled is True
+    assert config.manual_control.cmd_topic == "/cmd_vel_safe"
+    assert config.manual_control.max_linear_x <= 0.5
+    assert config.manual_control.max_angular_z <= 1.0
+    assert command.linear_x == 0.2
+    assert command.angular_z == 0.4
+
+    main_source = (root / "backend/main.py").read_text()
+    api_source = (root / "frontend/src/api.ts").read_text()
+    app_source = (root / "frontend/src/App.tsx").read_text()
+    controls_source = (root / "frontend/src/components/ControlSidebar.tsx").read_text()
+
+    assert "/api/manual-control/cmd_vel" in main_source
+    assert "sendManualVelocityCommand" in api_source
+    assert "ManualControlSection" in controls_source
+    assert "onManualVelocityCommand" in app_source
 
 
 def test_navigation_contract_uses_nav2_by_default():

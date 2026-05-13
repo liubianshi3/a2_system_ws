@@ -23,6 +23,7 @@ from .models import (
     DashboardSnapshot,
     InitialPoseRequest,
     LightStatusPayload,
+    ManualVelocityCommand,
     MapMediaListing,
     NavigationGoalRequest,
     RunTaskRouteRequest,
@@ -284,6 +285,17 @@ def create_app(config_path: str | None = None) -> FastAPI:
         except RosBridgeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"ok": True, "navigation": jsonable_encoder(state)}
+
+    @app.post("/api/manual-control/cmd_vel")
+    async def publish_manual_cmd_vel(request: ManualVelocityCommand):
+        node = ros_runtime.node
+        if node is None:
+            raise HTTPException(status_code=503, detail="ROS runtime 未启动")
+        try:
+            result = await asyncio.to_thread(node.publish_manual_velocity, request)
+        except RosBridgeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"ok": True, "manual_control": jsonable_encoder(result)}
 
     @app.post("/api/localization/initialpose")
     async def set_initial_pose(request: InitialPoseRequest):

@@ -17,6 +17,7 @@ import {
   projectPcdTo2d,
   saveMapObstacle,
   saveTaskRoute,
+  sendManualVelocityCommand,
   sendInitialPose,
   sendNavigationGoal,
   startMappingStack,
@@ -26,6 +27,7 @@ import {
 } from "./api";
 import {
   MapManagementSection,
+  ManualControlSection,
   ModeControlSection,
   NavigationTaskSection,
   ObstacleManagerSection,
@@ -51,6 +53,7 @@ import { useBackendSocket } from "./hooks/useBackendSocket";
 import type {
   BackendEvent,
   DashboardSnapshot,
+  ManualVelocityCommand,
   NavigationGoal,
   NavigationTaskState,
   SavedMapInfo,
@@ -259,6 +262,8 @@ export default function App() {
   const [routeDraftId, setRouteDraftId] = useState("office_loop");
   const [routeYaml, setRouteYaml] = useState("mission_name: office_loop\nwaypoints:\n");
   const [routeBusy, setRouteBusy] = useState(false);
+  const [manualControlBusy, setManualControlBusy] = useState(false);
+  const [lastManualControlMessage, setLastManualControlMessage] = useState<string | null>(null);
   const [obstacles, setObstacles] = useState<VirtualObstacleZone[]>([]);
   const [obstacleBusy, setObstacleBusy] = useState(false);
   const [obstacleLabel, setObstacleLabel] = useState("");
@@ -722,6 +727,22 @@ export default function App() {
     }
   };
 
+  const handleManualVelocityCommand = async (command: ManualVelocityCommand) => {
+    setManualControlBusy(true);
+    try {
+      const result = await sendManualVelocityCommand(command);
+      setLastManualControlMessage(result.message);
+      setLastSuccess(result.message);
+      setLastError(null);
+    } catch (error) {
+      setLastManualControlMessage(null);
+      setLastSuccess(null);
+      setLastError(error instanceof Error ? error.message : "手动控制失败");
+    } finally {
+      setManualControlBusy(false);
+    }
+  };
+
   const openDrawer = (drawer: Exclude<DrawerKey, null>) => {
     setActiveDrawer((current) => (current === drawer ? null : drawer));
   };
@@ -1061,6 +1082,13 @@ export default function App() {
           </DrawerPanel>
 
           <DrawerPanel side="right" open={activeDrawer === "nav"}>
+            <ManualControlSection
+              disabled={!rosRuntimeHealthy}
+              busy={manualControlBusy}
+              disabledReason={rosRuntimeHealthy ? null : "后端 ROS 线程未运行，不能手动控制"}
+              lastMessage={lastManualControlMessage}
+              onManualVelocityCommand={handleManualVelocityCommand}
+            />
             <SelectedGoalSection
               selectedGoal={selectedGoal}
               canSendGoal={canSendGoal}

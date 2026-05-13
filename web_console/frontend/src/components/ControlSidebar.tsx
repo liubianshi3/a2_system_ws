@@ -1,4 +1,5 @@
 import type {
+  ManualVelocityCommand,
   NavigationGoal,
   NavigationTaskState,
   RobotPose,
@@ -245,6 +246,62 @@ export function NavigationTaskSection({
             : `${formatNumber(Number(navigation.feedback.distance_remaining), 2)} m`,
         )}
       />
+    </section>
+  );
+}
+
+interface ManualControlSectionProps {
+  disabled: boolean;
+  busy: boolean;
+  disabledReason: string | null;
+  lastMessage: string | null;
+  onManualVelocityCommand: (command: ManualVelocityCommand) => void;
+}
+
+const MANUAL_COMMANDS: Record<string, ManualVelocityCommand> = {
+  forward: { linear_x: 0.35, linear_y: 0.0, angular_z: 0.0 },
+  backward: { linear_x: -0.25, linear_y: 0.0, angular_z: 0.0 },
+  left: { linear_x: 0.0, linear_y: 0.0, angular_z: 0.7 },
+  right: { linear_x: 0.0, linear_y: 0.0, angular_z: -0.7 },
+  stop: { linear_x: 0.0, linear_y: 0.0, angular_z: 0.0 },
+};
+
+export function ManualControlSection({
+  disabled,
+  busy,
+  disabledReason,
+  lastMessage,
+  onManualVelocityCommand,
+}: ManualControlSectionProps) {
+  const buttonDisabled = disabled || busy;
+  const commandButton = (key: keyof typeof MANUAL_COMMANDS, label: string, className: string, title: string) => (
+    <button
+      type="button"
+      className={`manual-control-button ${className}`}
+      disabled={buttonDisabled}
+      title={title}
+      aria-label={title}
+      onClick={() => onManualVelocityCommand(MANUAL_COMMANDS[key])}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <section className="panel">
+      <h2>手动控制</h2>
+      <div className="manual-control-grid">
+        <div />
+        {commandButton("forward", "↑", "manual-control-forward", "前进")}
+        <div />
+        {commandButton("left", "←", "manual-control-left", "左转")}
+        {commandButton("stop", "■", "manual-control-stop", "停止")}
+        {commandButton("right", "→", "manual-control-right", "右转")}
+        <div />
+        {commandButton("backward", "↓", "manual-control-backward", "后退")}
+        <div />
+      </div>
+      <p className="panel-message">{formatNullable(disabledReason ?? lastMessage, "点击方向键发布 /cmd_vel_safe")}</p>
     </section>
   );
 }

@@ -72,6 +72,8 @@ from .models import (
     DashboardSnapshot,
     CameraFrame,
     InitialPoseRequest,
+    ManualVelocityCommand,
+    ManualVelocityResponse,
     MapSnapshot,
     PointCloudSnapshot,
     NavigationGoal,
@@ -258,6 +260,11 @@ class RosBridgeNode(Node):
         self.cancel_stop_publisher = self.create_publisher(
             Twist,
             self.config.navigation.cancel_stop_topic,
+            10,
+        )
+        self.manual_control_publisher = self.create_publisher(
+            Twist,
+            self.config.manual_control.cmd_topic,
             10,
         )
         self.light_command_publisher = None
@@ -1364,6 +1371,39 @@ class RosBridgeNode(Node):
             "Published 3D pose-topic stop. "
             f"reason={reason} goal_topic={self.config.navigation.goal_topic} "
             f"stop_topic={self.config.navigation.cancel_stop_topic} burst={burst_count}"
+        )
+
+    def publish_manual_velocity(self, command: ManualVelocityCommand) -> ManualVelocityResponse:
+        manual = self.config.manual_control
+        if not manual.enabled:
+            raise RosBridgeError("手动控制未启用")
+
+        linear_x = max(-manual.max_linear_x, min(manual.max_linear_x, float(command.linear_x)))
+        linear_y = max(-manual.max_linear_y, min(manual.max_linear_y, float(command.linear_y)))
+        angular_z = max(-manual.max_angular_z, min(manual.max_angular_z, float(command.angular_z)))
+
+        msg = Twist()
+        msg.linear.x = linear_x
+        msg.linear.y = linear_y
+        msg.angular.z = angular_z
+
+        burst_count = max(1, int(manual.publish_burst_count))
+        interval = max(0.0, float(manual.publish_burst_interval_sec))
+        for _ in range(burst_count):
+            self.manual_control_publisher.publish(msg)
+            if interval > 0.0:
+                time.sleep(interval)
+
+        clipped_command = ManualVelocityCommand(
+            linear_x=linear_x,
+            linear_y=linear_y,
+            angular_z=angular_z,
+        )
+        return ManualVelocityResponse(
+            topic=manual.cmd_topic,
+            command=clipped_command,
+            burst_count=burst_count,
+            message=f"已发布手动速度到 {manual.cmd_topic}",
         )
 
     def set_initial_pose(self, request: InitialPoseRequest) -> dict[str, Any]:

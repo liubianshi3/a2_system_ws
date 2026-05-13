@@ -195,6 +195,19 @@ class NavigationTaskState(BaseModel):
     updated_at: str | None = None
 
 
+class ManualVelocityCommand(BaseModel):
+    linear_x: float = Field(default=0.0, ge=-1.0, le=1.0)
+    linear_y: float = Field(default=0.0, ge=-1.0, le=1.0)
+    angular_z: float = Field(default=0.0, ge=-2.0, le=2.0)
+
+
+class ManualVelocityResponse(BaseModel):
+    topic: str
+    command: ManualVelocityCommand
+    burst_count: int
+    message: str
+
+
 class CameraFrame(BaseModel):
     available: bool = False
     topic: str | None = None

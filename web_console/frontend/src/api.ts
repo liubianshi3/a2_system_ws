@@ -3,6 +3,8 @@ import type {
   InitialPoseRequestPayload,
   InitialPoseResult,
   LightStatusPayload,
+  ManualControlResponse,
+  ManualVelocityCommand,
   MapMediaListing,
   NavigationGoal,
   NavigationTaskState,
@@ -53,6 +55,18 @@ export async function cancelNavigationGoal(): Promise<NavigationTaskState> {
   });
   const payload = await handleJson<{ ok: boolean; navigation: NavigationTaskState }>(response);
   return payload.navigation;
+}
+
+export async function sendManualVelocityCommand(command: ManualVelocityCommand): Promise<ManualControlResponse> {
+  const response = await fetch("/api/manual-control/cmd_vel", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(command),
+  });
+  const payload = await handleJson<{ ok: boolean; manual_control: ManualControlResponse }>(response);
+  return payload.manual_control;
 }
 
 export async function sendInitialPose(payload: InitialPoseRequestPayload): Promise<InitialPoseResult> {

@@ -97,6 +97,17 @@ class NavigationConfig:
 
 
 @dataclass
+class ManualControlConfig:
+    enabled: bool = False
+    cmd_topic: str = "/cmd_vel_safe"
+    max_linear_x: float = 0.4
+    max_linear_y: float = 0.25
+    max_angular_z: float = 0.8
+    publish_burst_count: int = 3
+    publish_burst_interval_sec: float = 0.05
+
+
+@dataclass
 class HealthConfig:
     pose_stale_sec: float = 2.0
     health_broadcast_hz: float = 1.0
@@ -129,6 +140,7 @@ class AppConfig:
     ros: RosTopicConfig = field(default_factory=RosTopicConfig)
     camera: CameraConfig = field(default_factory=CameraConfig)
     navigation: NavigationConfig = field(default_factory=NavigationConfig)
+    manual_control: ManualControlConfig = field(default_factory=ManualControlConfig)
     health: HealthConfig = field(default_factory=HealthConfig)
     native_slam: NativeSlamConfig = field(default_factory=NativeSlamConfig)
     stack: StackConfig = field(default_factory=StackConfig)

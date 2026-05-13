@@ -487,6 +487,39 @@ button:disabled {
   margin-top: 0;
 }
 
+.manual-control-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(54px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+  margin-bottom: 12px;
+}
+
+.manual-control-button {
+  width: 100%;
+  aspect-ratio: 1;
+  min-height: 54px;
+  border-radius: 12px;
+  background: #e0f2fe;
+  color: #0f172a;
+  font-size: 24px;
+  line-height: 1;
+  box-shadow: 0 10px 22px rgba(14, 116, 144, 0.14);
+}
+
+.manual-control-forward,
+.manual-control-backward,
+.manual-control-left,
+.manual-control-right {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.manual-control-stop {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
 .form-label {
   display: block;
   margin: 10px 0 6px;

@@ -72,6 +72,15 @@ navigation:
   initial_pose_snap_radius_m: 1.0
   initial_pose_clearance_m: 0.18
 
+manual_control:
+  enabled: false
+  cmd_topic: /cmd_vel_safe
+  max_linear_x: 0.4
+  max_linear_y: 0.25
+  max_angular_z: 0.8
+  publish_burst_count: 3
+  publish_burst_interval_sec: 0.05
+
 health:
   pose_stale_sec: 2.0
   health_broadcast_hz: 1.0
