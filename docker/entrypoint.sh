@@ -13,5 +13,4 @@ source /opt/ros/humble/setup.bash
 source "${A2_WORKSPACE}/install/setup.bash"
 set -u
 
-# Start web console backend (open web UI to start mapping/navigation)
 exec "${A2_WORKSPACE}/web_console/scripts/run_backend.sh" "$@"

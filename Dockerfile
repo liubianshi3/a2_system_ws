@@ -5,7 +5,8 @@ FROM ${NODE_IMAGE} AS web-build
 WORKDIR /web
 
 COPY web_console/frontend/package*.json ./
-RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+RUN --mount=type=cache,target=/root/.npm \
+    if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
 COPY web_console/frontend/ ./
 RUN npm run build && test -f /backend/static/index.html
@@ -19,9 +20,15 @@ ENV UNITREE_SDK2_ROOT=/opt/unitree_robotics
 ENV CONFIG_PATH=/opt/a2_system_ws/web_console/backend/config.docker.yaml
 ENV LD_LIBRARY_PATH=/opt/unitree_robotics/lib:/opt/unitree_robotics/lib/x86_64
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN sed -i 's|http://archive.ubuntu.com/ubuntu|http://mirrors.aliyun.com/ubuntu|g; s|http://security.ubuntu.com/ubuntu|http://mirrors.aliyun.com/ubuntu|g' /etc/apt/sources.list
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get -o Acquire::Retries=5 update \
+    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     bash \
     build-essential \
+    ccache \
     cmake \
     curl \
     iproute2 \
@@ -55,30 +62,41 @@ RUN test -f /opt/unitree_robotics/lib/cmake/unitree_sdk2/unitree_sdk2Config.cmak
 COPY docker/a2_sdk_headers/a2/ /opt/unitree_robotics/include/unitree/robot/a2/
 
 WORKDIR /opt/a2_system_ws
+ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+
+COPY web_console/backend/requirements.txt ./web_console/backend/requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 config set global.index-url ${PIP_INDEX_URL} \
+    && pip3 install -U "pip<25" "setuptools<70" "packaging<24" wheel \
+    && pip3 install -r web_console/backend/requirements.txt
+
 COPY src ./src
 COPY proto ./proto
+RUN rm -rf src/third_party/autoware_localization/autoware_utils_pkg
+
+RUN --mount=type=cache,target=/root/.ccache,sharing=locked \
+    source /opt/ros/humble/setup.bash \
+    && export CCACHE_DIR=/root/.ccache \
+    && OUR_PACKAGES=$(colcon list \
+        | grep -vE 'autoware_|fast_lio|livox_ros_driver2|direct_lidar_inertial_odometry' \
+        | awk '{print $1}' \
+        | tr '\n' ' ') \
+    && colcon build --event-handlers console_direct+ --packages-select ${OUR_PACKAGES} --cmake-args \
+        -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+        -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+    && rm -rf build log
+
 COPY web_console/backend ./web_console/backend
 COPY web_console/scripts ./web_console/scripts
 COPY web_console/systemd ./web_console/systemd
 COPY web_console/README.md ./web_console/README.md
 COPY --from=web-build /backend/static ./web_console/backend/static
 COPY docker/entrypoint.sh /usr/local/bin/a2-web-entrypoint
-
-ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
-
-RUN chmod +x /usr/local/bin/a2-web-entrypoint \
+RUN sed -i 's/\r$//' /usr/local/bin/a2-web-entrypoint \
+    && find /opt/a2_system_ws/web_console/scripts /opt/a2_system_ws/src/a2_system/tools -type f -name "*.sh" -print0 | xargs -0 sed -i 's/\r$//' \
+    && chmod +x /usr/local/bin/a2-web-entrypoint \
     && chmod +x web_console/scripts/*.sh src/a2_system/tools/*.sh \
-    && rm -rf src/third_party/autoware_localization/autoware_utils_pkg \
-    && source /opt/ros/humble/setup.bash \
-    && OUR_PACKAGES=$(colcon list \
-        | grep -vE 'autoware_|fast_lio|livox_ros_driver2|direct_lidar_inertial_odometry' \
-        | awk '{print $1}' \
-        | tr '\n' ' ') \
-    && colcon build --packages-select ${OUR_PACKAGES} \
-    && pip3 config set global.index-url ${PIP_INDEX_URL} \
-    && pip3 install --no-cache-dir -r web_console/backend/requirements.txt \
-    && mkdir -p runtime/maps runtime/logs \
-    && rm -rf build log
+    && mkdir -p runtime/maps runtime/logs
 
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/a2-web-entrypoint"]
