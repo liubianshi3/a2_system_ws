@@ -495,7 +495,10 @@ export default function App() {
 
   const selectedMap = maps.find((map) => map.map_id === selectedMapId) ?? null;
   const has3DViewerData = snapshot.pointcloud.loaded || Boolean(selectedMap?.has_pointcloud_3d);
+  const directNavigationBackend = snapshot.navigation.backend === "cmd_vel_direct";
   const navigationUses3D = snapshot.navigation.backend === "pose_topic_3d" || has3DViewerData;
+  const navigationModeReady = stack?.mode === "navigation" || directNavigationBackend;
+  const navigationGoalBackendReady = snapshot.health.action_server_ready || directNavigationBackend;
   const localizationReason =
     snapshot.status.localization_status.reason ?? snapshot.status.localization_status.state ?? null;
   const rosRuntimeHealthy = snapshot.health.ros_thread_alive && snapshot.health.ros_connected;
@@ -511,9 +514,9 @@ export default function App() {
     [navigationMessage, snapshot.navigation],
   );
   const canSendGoal =
-    stack?.mode === "navigation" &&
+    navigationModeReady &&
     localizationReady &&
-    snapshot.health.action_server_ready &&
+    navigationGoalBackendReady &&
     poseFresh &&
     (navigationUses3D ? snapshot.pose.available : snapshot.map.loaded);
   const canSetInitialPose =
@@ -571,11 +574,11 @@ export default function App() {
       ? "请先在 2D 或 3D 视图里选一个目标点"
       : !rosRuntimeHealthy
         ? "后端 ROS 线程未运行，页面状态已过期"
-      : stack?.mode !== "navigation"
+      : !navigationModeReady
         ? "当前不在导航模式，不能发送导航目标"
-        : !localizationReady
-          ? `定位未就绪${localizationReason ? `: ${localizationReason}` : ""}`
-          : !snapshot.health.action_server_ready
+      : !localizationReady
+        ? `定位未就绪${localizationReason ? `: ${localizationReason}` : ""}`
+          : !navigationGoalBackendReady
             ? "导航后端未就绪"
             : !poseFresh
               ? "机器人当前位姿未刷新或已过期"

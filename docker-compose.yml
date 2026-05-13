@@ -108,7 +108,7 @@ services:
       - a2_ros2
     environment:
       A2_WORKSPACE: /opt/a2_system_ws
-      CONFIG_PATH: /opt/a2_system_ws/web_console/backend/config.docker.yaml
+      CONFIG_PATH: /opt/a2_system_ws/web_console/backend/config.sim.yaml
       ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-42}
       RMW_IMPLEMENTATION: ${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}
       A2_DOCKER_START_MODE: ${A2_DOCKER_START_MODE:-auto}

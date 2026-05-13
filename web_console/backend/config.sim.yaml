@@ -25,7 +25,6 @@ ros:
   tf_static_topic: /tf_static
   real_report_topic: /a2/real/report
   lidar_status_topic: /a2/lidar/status
-  camera_status_topic: /a2/camera/depth/status
   localization_ok_topic: /a2/localization_ok
   localization_status_topic: /a2/localization/status
   map_manager_status_topic: /a2/map_manager/status
@@ -34,17 +33,15 @@ ros:
   pose_goal_status_topic: /a2/nav2/status
   sdk_status_topic: /a2/sdk/status
   raw_state_topic: /a2/raw_state
-  camera_image_topic: /camera/image_raw
-  camera_compressed_topic: /camera/image_raw/compressed
 
 camera:
   enabled: true
-  prefer_compressed: true
+  prefer_compressed: false
   max_broadcast_hz: 2.0
   jpeg_quality: 70
 
 navigation:
-  backend: nav2
+  backend: cmd_vel_direct
   action_name: /navigate_to_pose
   goal_topic: /goal_pose_
   goal_frame: map
@@ -81,7 +78,7 @@ navigation:
   initial_pose_clearance_m: 0.18
 
 manual_control:
-  enabled: false
+  enabled: true
   cmd_topic: /cmd_vel_safe
   max_linear_x: 0.4
   max_linear_y: 0.25
@@ -102,9 +99,9 @@ native_slam:
   save_root: /home/unitree/dist/maps
 
 stack:
-  workspace: /home/unitree/a2_system_ws
+  workspace: /opt/a2_system_ws
   network_interface: net1
-  map_root: /home/unitree/a2_system_ws/runtime/maps
-  start_script: /home/unitree/a2_system_ws/src/a2_system/tools/start_real_stack.sh
-  stop_script: /home/unitree/a2_system_ws/src/a2_system/tools/stop_stack.sh
+  map_root: /opt/a2_system_ws/runtime/maps
+  start_script: /opt/a2_system_ws/src/a2_system/tools/start_real_stack.sh
+  stop_script: /opt/a2_system_ws/src/a2_system/tools/stop_stack.sh
   command_timeout_sec: 15.0

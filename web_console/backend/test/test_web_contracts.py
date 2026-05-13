@@ -6,6 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from backend.config import load_config
+from backend.direct_navigation import compute_direct_velocity_command
 from backend.models import (
     CameraFrame,
     DashboardSnapshot,
@@ -61,6 +62,17 @@ def test_docker_config_uses_raw_camera_when_compressed_topic_is_absent():
     assert config.camera.enabled is True
     assert config.camera.prefer_compressed is False
     assert config.ros.camera_image_topic == "/camera/image_raw"
+    assert config.navigation.backend == "nav2"
+
+
+def test_sim_config_uses_direct_cmd_vel_navigation_for_sim():
+    config = load_config(Path(__file__).resolve().parents[1] / "config.sim.yaml")
+
+    assert config.navigation.backend == "cmd_vel_direct"
+    assert config.navigation.direct_cmd_topic == "/cmd_vel_safe"
+    assert config.navigation.direct_goal_tolerance_m <= 0.25
+    assert config.navigation.direct_max_linear_x <= 0.35
+    assert config.navigation.direct_max_angular_z <= 0.8
 
 
 def test_manual_control_contract_publishes_safe_cmd_vel():
@@ -84,6 +96,65 @@ def test_manual_control_contract_publishes_safe_cmd_vel():
     assert "sendManualVelocityCommand" in api_source
     assert "ManualControlSection" in controls_source
     assert "onManualVelocityCommand" in app_source
+
+
+def test_direct_navigation_command_turns_then_drives_to_goal():
+    command = compute_direct_velocity_command(
+        current_x=0.0,
+        current_y=0.0,
+        current_yaw=1.57,
+        goal_x=1.0,
+        goal_y=0.0,
+        goal_yaw=0.0,
+        max_linear_x=0.3,
+        max_angular_z=0.6,
+        slow_radius_m=0.6,
+        heading_deadband_rad=0.25,
+        goal_tolerance_m=0.15,
+        yaw_tolerance_rad=0.25,
+    )
+
+    assert command.reached is False
+    assert command.linear_x == 0.0
+    assert command.angular_z < 0.0
+
+    command = compute_direct_velocity_command(
+        current_x=0.0,
+        current_y=0.0,
+        current_yaw=0.0,
+        goal_x=1.0,
+        goal_y=0.0,
+        goal_yaw=0.0,
+        max_linear_x=0.3,
+        max_angular_z=0.6,
+        slow_radius_m=0.6,
+        heading_deadband_rad=0.25,
+        goal_tolerance_m=0.15,
+        yaw_tolerance_rad=0.25,
+    )
+
+    assert command.reached is False
+    assert command.linear_x > 0.0
+    assert abs(command.angular_z) < 0.05
+
+    command = compute_direct_velocity_command(
+        current_x=1.0,
+        current_y=0.0,
+        current_yaw=0.0,
+        goal_x=1.03,
+        goal_y=0.0,
+        goal_yaw=0.05,
+        max_linear_x=0.3,
+        max_angular_z=0.6,
+        slow_radius_m=0.6,
+        heading_deadband_rad=0.25,
+        goal_tolerance_m=0.15,
+        yaw_tolerance_rad=0.25,
+    )
+
+    assert command.reached is True
+    assert command.linear_x == 0.0
+    assert command.angular_z == 0.0
 
 
 def test_navigation_contract_uses_nav2_by_default():

@@ -66,6 +66,7 @@ except ImportError:  # pragma: no cover - runtime environment fallback
     Response = None
 
 from .config import AppConfig
+from .direct_navigation import compute_direct_velocity_command
 from .models import (
     BatterySnapshot,
     RecoveryStatus,
@@ -225,6 +226,8 @@ class RosBridgeNode(Node):
         self._last_pose_monotonic = 0.0
         self._active_pose_goal: NavigationGoal | None = None
         self._active_pose_goal_started_at: float | None = None
+        self._direct_nav_cancel = threading.Event()
+        self._direct_nav_thread: threading.Thread | None = None
         self._native_slam_response_cv = threading.Condition()
         self._native_slam_responses: dict[int, dict[str, Any]] = {}
         self.manage_map_client = None
@@ -260,6 +263,11 @@ class RosBridgeNode(Node):
         self.cancel_stop_publisher = self.create_publisher(
             Twist,
             self.config.navigation.cancel_stop_topic,
+            10,
+        )
+        self.direct_cmd_publisher = self.create_publisher(
+            Twist,
+            self.config.navigation.direct_cmd_topic,
             10,
         )
         self.manual_control_publisher = self.create_publisher(
@@ -1081,9 +1089,9 @@ class RosBridgeNode(Node):
     def _publish_health(self) -> None:
         self._update_pose_topic_goal()
         with self._lock:
-            if self.config.navigation.backend == "pose_topic_3d":
+            if self.config.navigation.backend in {"pose_topic_3d", "cmd_vel_direct"}:
                 self.health.action_server_ready = True
-                self.navigation.backend = "pose_topic_3d"
+                self.navigation.backend = self.config.navigation.backend
                 self.navigation.action_server_ready = True
             else:
                 self.health.action_server_ready = bool(self.action_client and self.action_client.server_is_ready())
@@ -1246,6 +1254,8 @@ class RosBridgeNode(Node):
                 raise RosBridgeError("地图尚未加载完成")
             if self._active_goal_handle is not None or self._active_pose_goal is not None:
                 raise RosBridgeError("已有导航任务正在执行")
+            if self.config.navigation.backend == "cmd_vel_direct":
+                return self._start_direct_cmd_vel_goal(request.goal)
             if self.config.navigation.backend == "pose_topic_3d":
                 return self._send_pose_topic_goal(request.goal)
             if self.action_client is None or NavigateToPose is None:
@@ -1321,6 +1331,124 @@ class RosBridgeNode(Node):
             if "error" in result_box:
                 raise RosBridgeError(str(result_box["error"]))
             return deep_copy_model(self.navigation)
+
+    def _publish_direct_cmd_stop(self) -> None:
+        self.direct_cmd_publisher.publish(Twist())
+
+    def _start_direct_cmd_vel_goal(self, requested_goal: NavigationGoal) -> NavigationTaskState:
+        with self._lock:
+            pose = deep_copy_model(self.pose)
+        if not pose.available or pose.x is None or pose.y is None:
+            raise RosBridgeError("机器人当前位姿不可用，不能启动仿真直控导航")
+
+        goal = requested_goal.model_copy(update={"frame_id": self.config.navigation.goal_frame})
+        cancel_event = threading.Event()
+        self._direct_nav_cancel = cancel_event
+        with self._lock:
+            self._active_pose_goal = goal
+            self._active_pose_goal_started_at = time.monotonic()
+            self.navigation = NavigationTaskState(
+                state="navigating",
+                message=f"仿真直控导航已启动，速度发布到 {self.config.navigation.direct_cmd_topic}",
+                backend="cmd_vel_direct",
+                action_server_ready=True,
+                goal=goal,
+                feedback={},
+                updated_at=now_iso(),
+            )
+        self._publish("navigation", dump_model(self.navigation))
+        self._direct_nav_thread = threading.Thread(
+            target=self._run_direct_cmd_vel_goal,
+            args=(goal, cancel_event),
+            daemon=True,
+        )
+        self._direct_nav_thread.start()
+        return deep_copy_model(self.navigation)
+
+    def _run_direct_cmd_vel_goal(self, goal: NavigationGoal, cancel_event: threading.Event) -> None:
+        nav = self.config.navigation
+        period = 1.0 / max(float(nav.direct_control_hz), 1.0)
+        started_at = time.monotonic()
+
+        while not cancel_event.is_set():
+            with self._lock:
+                if self._direct_nav_cancel is not cancel_event or self._active_pose_goal is None:
+                    return
+                pose = deep_copy_model(self.pose)
+
+            elapsed = time.monotonic() - started_at
+            if elapsed > float(nav.goal_timeout_sec):
+                self._publish_direct_cmd_stop()
+                with self._lock:
+                    if self._direct_nav_cancel is cancel_event:
+                        self._active_pose_goal = None
+                        self._active_pose_goal_started_at = None
+                        self.navigation.state = "failed"
+                        self.navigation.message = "仿真直控导航超时"
+                        self.navigation.updated_at = now_iso()
+                self._publish("navigation", dump_model(self.navigation))
+                return
+
+            if not pose.available or pose.x is None or pose.y is None:
+                self._publish_direct_cmd_stop()
+                with self._lock:
+                    self.navigation.feedback = {"reason": "pose_unavailable", "elapsed_sec": elapsed}
+                    self.navigation.message = "仿真直控导航等待位姿"
+                    self.navigation.updated_at = now_iso()
+                self._publish("navigation", dump_model(self.navigation))
+                time.sleep(period)
+                continue
+
+            command = compute_direct_velocity_command(
+                current_x=float(pose.x),
+                current_y=float(pose.y),
+                current_yaw=float(pose.yaw or 0.0),
+                goal_x=goal.x,
+                goal_y=goal.y,
+                goal_yaw=goal.yaw,
+                max_linear_x=nav.direct_max_linear_x,
+                max_angular_z=nav.direct_max_angular_z,
+                slow_radius_m=nav.direct_slow_radius_m,
+                heading_deadband_rad=nav.direct_heading_deadband_rad,
+                goal_tolerance_m=nav.direct_goal_tolerance_m,
+                yaw_tolerance_rad=nav.direct_yaw_tolerance_rad,
+            )
+            feedback = {
+                "distance_remaining": command.distance_remaining,
+                "heading_error_rad": command.heading_error_rad,
+                "yaw_error_rad": command.yaw_error_rad,
+                "vx": command.linear_x,
+                "wz": command.angular_z,
+                "elapsed_sec": elapsed,
+                "backend": "cmd_vel_direct",
+            }
+
+            if command.reached:
+                self._publish_direct_cmd_stop()
+                with self._lock:
+                    if self._direct_nav_cancel is cancel_event:
+                        self._active_pose_goal = None
+                        self._active_pose_goal_started_at = None
+                        self.navigation.state = "succeeded"
+                        self.navigation.message = "仿真直控导航已到达目标点"
+                        self.navigation.feedback = feedback
+                        self.navigation.updated_at = now_iso()
+                self._publish("navigation", dump_model(self.navigation))
+                return
+
+            twist = Twist()
+            twist.linear.x = command.linear_x
+            twist.angular.z = command.angular_z
+            self.direct_cmd_publisher.publish(twist)
+            with self._lock:
+                self.navigation.state = "navigating"
+                self.navigation.message = "仿真直控导航进行中"
+                self.navigation.feedback = feedback
+                self.navigation.updated_at = now_iso()
+            self._publish("navigation", dump_model(self.navigation))
+            time.sleep(period)
+
+        self._publish_direct_cmd_stop()
 
     def _send_pose_topic_goal(self, requested_goal: NavigationGoal) -> NavigationTaskState:
         goal = requested_goal.model_copy(update={"frame_id": self.config.navigation.goal_frame})
@@ -1533,6 +1661,22 @@ class RosBridgeNode(Node):
 
     def cancel_navigation(self) -> NavigationTaskState:
         with self._navigation_lock:
+            if self.config.navigation.backend == "cmd_vel_direct":
+                self._direct_nav_cancel.set()
+                self._publish_direct_cmd_stop()
+                with self._lock:
+                    had_active_goal = self._active_pose_goal is not None
+                    self._active_pose_goal = None
+                    self._active_pose_goal_started_at = None
+                    self.navigation.state = "canceled" if had_active_goal else "idle"
+                    self.navigation.message = (
+                        "仿真直控导航已取消，并已发布停止信号"
+                        if had_active_goal
+                        else "当前没有活动仿真直控导航，已发布停止信号"
+                    )
+                    self.navigation.updated_at = now_iso()
+                self._publish("navigation", dump_model(self.navigation))
+                return deep_copy_model(self.navigation)
             if self.config.navigation.backend == "pose_topic_3d":
                 if self._active_pose_goal is None:
                     self._publish_pose_topic_stop("cancel_without_active_goal")

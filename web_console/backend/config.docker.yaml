@@ -45,6 +45,14 @@ navigation:
   action_name: /navigate_to_pose
   goal_topic: /goal_pose_
   goal_frame: map
+  direct_cmd_topic: /cmd_vel_safe
+  direct_control_hz: 10.0
+  direct_max_linear_x: 0.3
+  direct_max_angular_z: 0.6
+  direct_slow_radius_m: 0.6
+  direct_heading_deadband_rad: 0.25
+  direct_goal_tolerance_m: 0.15
+  direct_yaw_tolerance_rad: 0.25
   cancel_stop_topic: /cmd_vel
   cancel_stop_burst_count: 5
   cancel_stop_burst_interval_sec: 0.05

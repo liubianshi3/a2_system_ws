@@ -71,6 +71,14 @@ class NavigationConfig:
     action_name: str = "/navigate_to_pose"
     goal_topic: str = "/goal_pose_"
     goal_frame: str = "map"
+    direct_cmd_topic: str = "/cmd_vel_safe"
+    direct_control_hz: float = 10.0
+    direct_max_linear_x: float = 0.3
+    direct_max_angular_z: float = 0.6
+    direct_slow_radius_m: float = 0.6
+    direct_heading_deadband_rad: float = 0.25
+    direct_goal_tolerance_m: float = 0.15
+    direct_yaw_tolerance_rad: float = 0.25
     cancel_stop_topic: str = "/cmd_vel"
     cancel_stop_burst_count: int = 5
     cancel_stop_burst_interval_sec: float = 0.05
