@@ -111,7 +111,7 @@ services:
       CONFIG_PATH: /opt/a2_system_ws/web_console/backend/config.sim.yaml
       ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-42}
       RMW_IMPLEMENTATION: ${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}
-      A2_DOCKER_START_MODE: ${A2_DOCKER_START_MODE:-auto}
+      A2_DOCKER_START_MODE: ${A2_DOCKER_START_MODE:-standby}
       A2_NAV_MAP_ID: ${A2_NAV_MAP_ID:-}
       A2_NETWORK_INTERFACE: ${A2_NETWORK_INTERFACE:-eth0}
       A2_JT128_INTERFACE: ${A2_JT128_INTERFACE:-net1}

@@ -25,26 +25,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     cmake \
     curl \
+    iproute2 \
+    iputils-ping \
     procps \
     python3-colcon-common-extensions \
     python3-pip \
     python3-setuptools \
     python3-yaml \
     ros-humble-rmw-cyclonedds-cpp \
+    ros-humble-octomap \
     ros-humble-sensor-msgs-py \
     ros-humble-tf-transformations \
     && if [[ "${A2_BUILD_PROFILE}" != "sim-smoke" ]]; then \
       apt-get install -y --no-install-recommends \
         build-essential \
-        iproute2 \
-        iputils-ping \
         net-tools \
         python3-venv \
         ros-humble-navigation2 \
         ros-humble-nav2-bringup \
         ros-humble-robot-localization \
         ros-humble-imu-tools \
-        ros-humble-octomap \
         ros-humble-octomap-msgs \
         ros-humble-octomap-ros \
         ros-humble-octomap-server \
