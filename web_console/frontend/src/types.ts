@@ -78,6 +78,7 @@ export interface RobotStatus {
   map_manager_status: TextStatus;
   task_manager_status: TextStatus;
   sdk_status: TextStatus;
+  control_status: TextStatus;
   active_map: string | null;
   velocity_linear_x: number | null;
   velocity_angular_z: number | null;
@@ -115,6 +116,20 @@ export interface ManualControlResponse {
   topic: string;
   command: ManualVelocityCommand;
   burst_count: number;
+  message: string;
+}
+
+export interface GaitControlCommand {
+  gait_type?: number | null;
+  speed_level?: number | null;
+  body_height?: number | null;
+}
+
+export interface GaitControlResponse {
+  gait_type_topic: string;
+  speed_level_topic: string;
+  body_height_topic: string;
+  command: GaitControlCommand;
   message: string;
 }
 

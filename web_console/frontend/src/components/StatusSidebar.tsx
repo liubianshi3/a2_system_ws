@@ -92,6 +92,7 @@ export function SystemStatusSection({
       <StatusRow label="lidar" value={formatStatusSummary(status?.lidar_status)} />
       <StatusRow label="camera" value={formatStatusSummary(status?.camera_status)} />
       <StatusRow label="SDK" value={formatStatusSummary(status?.sdk_status)} />
+      <StatusRow label="control" value={formatStatusSummary(status?.control_status)} />
       <StatusRow label="task mgr" value={formatStatusSummary(status?.task_manager_status)} />
     </section>
   );
@@ -125,6 +126,8 @@ export function RuntimeInfoSection({ status }: Pick<StatusSidebarProps, "status"
       <StatusRow label="active_map" value={formatNullable(status?.active_map)} />
       <StatusRow label="规划器" value={formatNullable(status?.planner_type)} />
       <StatusRow label="行为树" value={formatNullable(status?.bt_filename)} />
+      <StatusRow label="gait" value={formatNullable(status?.control_status?.fields?.gait_type)} />
+      <StatusRow label="gait state" value={formatNullable(status?.control_status?.fields?.gait_state)} />
       <StatusRow label="map manager" value={formatStatusSummary(status?.map_manager_status)} />
     </section>
   );

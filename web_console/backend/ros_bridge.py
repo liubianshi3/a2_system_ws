@@ -18,7 +18,7 @@ from rclpy.action import ActionClient
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-from std_msgs.msg import Bool, String
+from std_msgs.msg import Bool, Float32, Int32, String
 from tf2_msgs.msg import TFMessage
 from sensor_msgs.msg import BatteryState, CompressedImage, Image, PointCloud2
 
@@ -73,6 +73,8 @@ from .models import (
     DashboardSnapshot,
     CameraFrame,
     InitialPoseRequest,
+    GaitControlCommand,
+    GaitControlResponse,
     ManualVelocityCommand,
     ManualVelocityResponse,
     MapSnapshot,
@@ -275,6 +277,21 @@ class RosBridgeNode(Node):
             self.config.manual_control.cmd_topic,
             10,
         )
+        self.gait_type_publisher = self.create_publisher(
+            Int32,
+            self.config.gait_control.gait_type_topic,
+            10,
+        )
+        self.speed_level_publisher = self.create_publisher(
+            Int32,
+            self.config.gait_control.speed_level_topic,
+            10,
+        )
+        self.body_height_publisher = self.create_publisher(
+            Float32,
+            self.config.gait_control.body_height_topic,
+            10,
+        )
         self.light_command_publisher = None
         if LightCommand is not None:
             self.light_command_publisher = self.create_publisher(
@@ -352,6 +369,7 @@ class RosBridgeNode(Node):
         self.create_subscription(String, ros.task_manager_status_topic, self._on_task_manager_status, 10)
         self.create_subscription(String, ros.pose_goal_status_topic, self._on_pose_goal_status, 10)
         self.create_subscription(String, ros.sdk_status_topic, self._on_sdk_status, 10)
+        self.create_subscription(String, ros.control_status_topic, self._on_control_status, 10)
         if RobotState is not None:
             self.create_subscription(RobotState, ros.raw_state_topic, self._on_raw_state, 10)
         else:
@@ -936,6 +954,11 @@ class RosBridgeNode(Node):
     def _on_sdk_status(self, msg: String) -> None:
         with self._lock:
             self.status.sdk_status = self._status_from_string(msg.data)
+        self._publish("status", dump_model(self.status))
+
+    def _on_control_status(self, msg: String) -> None:
+        with self._lock:
+            self.status.control_status = self._status_from_string(msg.data)
         self._publish("status", dump_model(self.status))
 
     def _on_raw_state(self, msg: RobotState) -> None:
@@ -1532,6 +1555,36 @@ class RosBridgeNode(Node):
             command=clipped_command,
             burst_count=burst_count,
             message=f"已发布手动速度到 {manual.cmd_topic}",
+        )
+
+    def publish_gait_control(self, command: GaitControlCommand) -> GaitControlResponse:
+        gait = self.config.gait_control
+        if not gait.enabled:
+            raise RosBridgeError("步态控制未启用")
+        published: list[str] = []
+        if command.gait_type is not None:
+            msg = Int32()
+            msg.data = max(gait.gait_type_min, min(gait.gait_type_max, int(command.gait_type)))
+            self.gait_type_publisher.publish(msg)
+            published.append(f"gait_type={msg.data}")
+        if command.speed_level is not None:
+            msg = Int32()
+            msg.data = max(gait.speed_level_min, min(gait.speed_level_max, int(command.speed_level)))
+            self.speed_level_publisher.publish(msg)
+            published.append(f"speed_level={msg.data}")
+        if command.body_height is not None:
+            msg = Float32()
+            msg.data = float(max(gait.body_height_min, min(gait.body_height_max, float(command.body_height))))
+            self.body_height_publisher.publish(msg)
+            published.append(f"body_height={msg.data:.3f}")
+        if not published:
+            raise RosBridgeError("至少提供 gait_type、speed_level 或 body_height 之一")
+        return GaitControlResponse(
+            gait_type_topic=gait.gait_type_topic,
+            speed_level_topic=gait.speed_level_topic,
+            body_height_topic=gait.body_height_topic,
+            command=command,
+            message=f"已发布步态控制: {', '.join(published)}",
         )
 
     def set_initial_pose(self, request: InitialPoseRequest) -> dict[str, Any]:

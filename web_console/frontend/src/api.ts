@@ -1,5 +1,7 @@
 import type {
   DashboardSnapshot,
+  GaitControlCommand,
+  GaitControlResponse,
   InitialPoseRequestPayload,
   InitialPoseResult,
   LightStatusPayload,
@@ -67,6 +69,18 @@ export async function sendManualVelocityCommand(command: ManualVelocityCommand):
   });
   const payload = await handleJson<{ ok: boolean; manual_control: ManualControlResponse }>(response);
   return payload.manual_control;
+}
+
+export async function sendGaitControlCommand(command: GaitControlCommand): Promise<GaitControlResponse> {
+  const response = await fetch("/api/gait-control", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(command),
+  });
+  const payload = await handleJson<{ ok: boolean; gait_control: GaitControlResponse }>(response);
+  return payload.gait_control;
 }
 
 export async function sendInitialPose(payload: InitialPoseRequestPayload): Promise<InitialPoseResult> {

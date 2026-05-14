@@ -10,6 +10,7 @@ from backend.direct_navigation import compute_direct_velocity_command
 from backend.models import (
     CameraFrame,
     DashboardSnapshot,
+    GaitControlCommand,
     ManualVelocityCommand,
     MapMediaEntry,
     MapMediaListing,
@@ -96,6 +97,29 @@ def test_manual_control_contract_publishes_safe_cmd_vel():
     assert "sendManualVelocityCommand" in api_source
     assert "ManualControlSection" in controls_source
     assert "onManualVelocityCommand" in app_source
+
+
+def test_gait_control_contract_publishes_unitree_sport_requests():
+    root = Path(__file__).resolve().parents[2]
+    config = load_config(root / "backend/config.docker.yaml")
+    command = GaitControlCommand(gait_type=1, speed_level=1)
+
+    assert config.gait_control.enabled is True
+    assert config.gait_control.gait_type_topic == "/a2/control/gait_type"
+    assert config.gait_control.speed_level_topic == "/a2/control/speed_level"
+    assert config.gait_control.body_height_topic == "/a2/control/body_height"
+    assert config.ros.control_status_topic == "/a2/control/status"
+    assert command.gait_type == 1
+
+    main_source = (root / "backend/main.py").read_text()
+    api_source = (root / "frontend/src/api.ts").read_text()
+    app_source = (root / "frontend/src/App.tsx").read_text()
+    controls_source = (root / "frontend/src/components/ControlSidebar.tsx").read_text()
+
+    assert "/api/gait-control" in main_source
+    assert "sendGaitControlCommand" in api_source
+    assert "GaitControlSection" in controls_source
+    assert "onGaitControlCommand" in app_source
 
 
 def test_direct_navigation_command_turns_then_drives_to_goal():

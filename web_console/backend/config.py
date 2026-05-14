@@ -49,6 +49,7 @@ class RosTopicConfig:
     task_manager_status_topic: str = "/a2/task_manager/status"
     pose_goal_status_topic: str = "/a2/nav2/status"
     sdk_status_topic: str = "/a2/sdk/status"
+    control_status_topic: str = "/a2/control/status"
     raw_state_topic: str = "/a2/raw_state"
     camera_image_topic: str = "/camera/image_raw"
     camera_compressed_topic: str = "/camera/image_raw/compressed"
@@ -116,6 +117,20 @@ class ManualControlConfig:
 
 
 @dataclass
+class GaitControlConfig:
+    enabled: bool = True
+    gait_type_topic: str = "/a2/control/gait_type"
+    speed_level_topic: str = "/a2/control/speed_level"
+    body_height_topic: str = "/a2/control/body_height"
+    gait_type_min: int = 0
+    gait_type_max: int = 7
+    speed_level_min: int = 0
+    speed_level_max: int = 3
+    body_height_min: float = -0.10
+    body_height_max: float = 0.10
+
+
+@dataclass
 class HealthConfig:
     pose_stale_sec: float = 2.0
     health_broadcast_hz: float = 1.0
@@ -149,6 +164,7 @@ class AppConfig:
     camera: CameraConfig = field(default_factory=CameraConfig)
     navigation: NavigationConfig = field(default_factory=NavigationConfig)
     manual_control: ManualControlConfig = field(default_factory=ManualControlConfig)
+    gait_control: GaitControlConfig = field(default_factory=GaitControlConfig)
     health: HealthConfig = field(default_factory=HealthConfig)
     native_slam: NativeSlamConfig = field(default_factory=NativeSlamConfig)
     stack: StackConfig = field(default_factory=StackConfig)

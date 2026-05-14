@@ -22,6 +22,9 @@ This file locks the ROS 2 interfaces exposed by the host-side A2 stack.
 | `/camera/image_raw/compressed` | `sensor_msgs/msg/CompressedImage` | A2 camera driver or image transport | web console | real | Preferred low-bandwidth camera stream |
 | `/cmd_vel` | `geometry_msgs/msg/Twist` | Nav2 or `pose_goal_controller_3d` | `a2_control_bridge` | real | Canonical velocity command |
 | `/a2/command_limited` | `geometry_msgs/msg/TwistStamped` | `a2_control_bridge` | diagnostics | real | Saturated and gated command |
+| `/a2/control/gait_type` | `std_msgs/msg/Int32` | tools/UI | `a2_control_bridge` | real | Unitree A2 `SportClient::SwitchGait` request applied before `Move()` |
+| `/a2/control/speed_level` | `std_msgs/msg/Int32` | tools/UI | `a2_control_bridge` | real | Unitree A2 `SportClient::SpeedLevel` request applied with gait control |
+| `/a2/control/body_height` | `std_msgs/msg/Float32` | tools/UI | `a2_control_bridge` | real | Optional Unitree A2 `SportClient::BodyHeight` request when enabled |
 | `/a2/localization_ok` | `std_msgs/msg/Bool` | `localization_gate` | safety, control | real | Motion gate input |
 | `/a2/localization/status` | `std_msgs/msg/String` | `localization_gate` | tools/UI | real | `mode=...;state=...;ready=...;reason=...` |
 | `/a2/allow_motion` | `std_msgs/msg/Bool` | `safety_supervisor` | `a2_control_bridge` | real | Final motion allow bit |

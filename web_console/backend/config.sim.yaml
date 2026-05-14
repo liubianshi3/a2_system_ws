@@ -32,6 +32,7 @@ ros:
   task_manager_status_topic: /a2/task_manager/status
   pose_goal_status_topic: /a2/nav2/status
   sdk_status_topic: /a2/sdk/status
+  control_status_topic: /a2/control/status
   raw_state_topic: /a2/raw_state
 
 camera:
@@ -85,6 +86,18 @@ manual_control:
   max_angular_z: 0.8
   publish_burst_count: 3
   publish_burst_interval_sec: 0.05
+
+gait_control:
+  enabled: true
+  gait_type_topic: /a2/control/gait_type
+  speed_level_topic: /a2/control/speed_level
+  body_height_topic: /a2/control/body_height
+  gait_type_min: 0
+  gait_type_max: 7
+  speed_level_min: 0
+  speed_level_max: 3
+  body_height_min: -0.10
+  body_height_max: 0.10
 
 health:
   pose_stale_sec: 2.0

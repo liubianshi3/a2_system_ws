@@ -83,6 +83,7 @@ class RobotStatus(BaseModel):
     map_manager_status: TextStatus = Field(default_factory=TextStatus)
     task_manager_status: TextStatus = Field(default_factory=TextStatus)
     sdk_status: TextStatus = Field(default_factory=TextStatus)
+    control_status: TextStatus = Field(default_factory=TextStatus)
     active_map: str | None = None
     velocity_linear_x: float | None = None
     velocity_angular_z: float | None = None
@@ -205,6 +206,20 @@ class ManualVelocityResponse(BaseModel):
     topic: str
     command: ManualVelocityCommand
     burst_count: int
+    message: str
+
+
+class GaitControlCommand(BaseModel):
+    gait_type: int | None = Field(default=None, ge=0, le=7)
+    speed_level: int | None = Field(default=None, ge=0, le=3)
+    body_height: float | None = Field(default=None, ge=-0.10, le=0.10)
+
+
+class GaitControlResponse(BaseModel):
+    gait_type_topic: str
+    speed_level_topic: str
+    body_height_topic: str
+    command: GaitControlCommand
     message: str
 
 

@@ -17,3 +17,18 @@ a2_control_bridge:
     control_hz: 20.0
     allow_motion_without_map: false
     allow_motion_without_localization: false
+    gait_control_enabled: false
+    gait_type_topic: /a2/control/gait_type
+    speed_level_topic: /a2/control/speed_level
+    body_height_topic: /a2/control/body_height
+    gait_type: 1
+    gait_type_min: 0
+    gait_type_max: 7
+    apply_speed_level: true
+    speed_level: 1
+    speed_level_min: 0
+    speed_level_max: 3
+    apply_body_height: false
+    body_height: 0.0
+    body_height_min: -0.10
+    body_height_max: 0.10

@@ -79,6 +79,22 @@ button:disabled {
   color: #fff;
 }
 
+.button-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.compact-status-grid {
+  margin-top: 10px;
+}
+
 .legacy-console-shell {
   min-height: 100%;
   display: flex;

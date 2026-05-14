@@ -21,6 +21,7 @@ from .config import load_config
 from .grpc_server import GrpcServer
 from .models import (
     DashboardSnapshot,
+    GaitControlCommand,
     InitialPoseRequest,
     LightStatusPayload,
     ManualVelocityCommand,
@@ -296,6 +297,17 @@ def create_app(config_path: str | None = None) -> FastAPI:
         except RosBridgeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"ok": True, "manual_control": jsonable_encoder(result)}
+
+    @app.post("/api/gait-control")
+    async def publish_gait_control(request: GaitControlCommand):
+        node = ros_runtime.node
+        if node is None:
+            raise HTTPException(status_code=503, detail="ROS runtime 未启动")
+        try:
+            result = await asyncio.to_thread(node.publish_gait_control, request)
+        except RosBridgeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"ok": True, "gait_control": jsonable_encoder(result)}
 
     @app.post("/api/localization/initialpose")
     async def set_initial_pose(request: InitialPoseRequest):

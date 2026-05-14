@@ -1,4 +1,5 @@
 import type {
+  GaitControlCommand,
   ManualVelocityCommand,
   NavigationGoal,
   NavigationTaskState,
@@ -258,6 +259,15 @@ interface ManualControlSectionProps {
   onManualVelocityCommand: (command: ManualVelocityCommand) => void;
 }
 
+interface GaitControlSectionProps {
+  disabled: boolean;
+  busy: boolean;
+  lastMessage: string | null;
+  controlFields: Record<string, string> | null | undefined;
+  rawGaitType: number | null | undefined;
+  onGaitControlCommand: (command: GaitControlCommand) => void;
+}
+
 const MANUAL_COMMANDS: Record<string, ManualVelocityCommand> = {
   forward: { linear_x: 0.35, linear_y: 0.0, angular_z: 0.0 },
   backward: { linear_x: -0.25, linear_y: 0.0, angular_z: 0.0 },
@@ -302,6 +312,58 @@ export function ManualControlSection({
         <div />
       </div>
       <p className="panel-message">{formatNullable(disabledReason ?? lastMessage, "点击方向键发布 /cmd_vel_safe")}</p>
+    </section>
+  );
+}
+
+export function GaitControlSection({
+  disabled,
+  busy,
+  lastMessage,
+  controlFields,
+  rawGaitType,
+  onGaitControlCommand,
+}: GaitControlSectionProps) {
+  const buttonDisabled = disabled || busy;
+  const currentGait = controlFields?.gait_type ?? (rawGaitType == null ? "—" : String(rawGaitType));
+  const gaitState = controlFields?.gait_state ?? "unknown";
+  const speedLevel = controlFields?.speed_level ?? "—";
+
+  return (
+    <section className="panel">
+      <h2>步态控制</h2>
+      <div className="button-row">
+        <button
+          type="button"
+          className="secondary-button"
+          disabled={buttonDisabled}
+          onClick={() => onGaitControlCommand({ gait_type: 1, speed_level: 1 })}
+        >
+          步态 1
+        </button>
+        <button
+          type="button"
+          className="secondary-button"
+          disabled={buttonDisabled}
+          onClick={() => onGaitControlCommand({ gait_type: 2, speed_level: 2 })}
+        >
+          步态 2
+        </button>
+        <button
+          type="button"
+          className="secondary-button"
+          disabled={buttonDisabled}
+          onClick={() => onGaitControlCommand({ gait_type: 3, speed_level: 1 })}
+        >
+          步态 3
+        </button>
+      </div>
+      <div className="status-grid compact-status-grid">
+        <StatusMini label="gait" value={currentGait} />
+        <StatusMini label="speed" value={speedLevel} />
+        <StatusMini label="state" value={gaitState} />
+      </div>
+      <p className="panel-message">{formatNullable(lastMessage, "等待步态指令")}</p>
     </section>
   );
 }

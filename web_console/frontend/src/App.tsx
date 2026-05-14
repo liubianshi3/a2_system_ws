@@ -12,6 +12,7 @@ import {
   fetchStackStatus,
   fetchTaskRoute,
   fetchTaskRoutes,
+  sendGaitControlCommand,
   runTaskRoute,
   saveCurrentMap,
   projectPcdTo2d,
@@ -26,6 +27,7 @@ import {
   stopStack,
 } from "./api";
 import {
+  GaitControlSection,
   MapManagementSection,
   ManualControlSection,
   ModeControlSection,
@@ -53,6 +55,7 @@ import { useBackendSocket } from "./hooks/useBackendSocket";
 import type {
   BackendEvent,
   DashboardSnapshot,
+  GaitControlCommand,
   ManualVelocityCommand,
   NavigationGoal,
   NavigationTaskState,
@@ -114,6 +117,7 @@ function createEmptySnapshot(): DashboardSnapshot {
       map_manager_status: { raw: null, mode: null, state: null, ready: null, reason: null, fields: {} },
       task_manager_status: { raw: null, mode: null, state: null, ready: null, reason: null, fields: {} },
       sdk_status: { raw: null, mode: null, state: null, ready: null, reason: null, fields: {} },
+      control_status: { raw: null, mode: null, state: null, ready: null, reason: null, fields: {} },
       active_map: null,
       velocity_linear_x: null,
       velocity_angular_z: null,
@@ -264,6 +268,8 @@ export default function App() {
   const [routeBusy, setRouteBusy] = useState(false);
   const [manualControlBusy, setManualControlBusy] = useState(false);
   const [lastManualControlMessage, setLastManualControlMessage] = useState<string | null>(null);
+  const [gaitControlBusy, setGaitControlBusy] = useState(false);
+  const [lastGaitControlMessage, setLastGaitControlMessage] = useState<string | null>(null);
   const [obstacles, setObstacles] = useState<VirtualObstacleZone[]>([]);
   const [obstacleBusy, setObstacleBusy] = useState(false);
   const [obstacleLabel, setObstacleLabel] = useState("");
@@ -746,6 +752,22 @@ export default function App() {
     }
   };
 
+  const handleGaitControlCommand = async (command: GaitControlCommand) => {
+    setGaitControlBusy(true);
+    try {
+      const result = await sendGaitControlCommand(command);
+      setLastGaitControlMessage(result.message);
+      setLastSuccess(result.message);
+      setLastError(null);
+    } catch (error) {
+      setLastGaitControlMessage(null);
+      setLastSuccess(null);
+      setLastError(error instanceof Error ? error.message : "步态控制失败");
+    } finally {
+      setGaitControlBusy(false);
+    }
+  };
+
   const openDrawer = (drawer: Exclude<DrawerKey, null>) => {
     setActiveDrawer((current) => (current === drawer ? null : drawer));
   };
@@ -1091,6 +1113,14 @@ export default function App() {
               disabledReason={rosRuntimeHealthy ? null : "后端 ROS 线程未运行，不能手动控制"}
               lastMessage={lastManualControlMessage}
               onManualVelocityCommand={handleManualVelocityCommand}
+            />
+            <GaitControlSection
+              disabled={!rosRuntimeHealthy}
+              busy={gaitControlBusy}
+              lastMessage={lastGaitControlMessage}
+              controlFields={snapshot.status.control_status.fields}
+              rawGaitType={snapshot.status.raw_state?.gait_type}
+              onGaitControlCommand={handleGaitControlCommand}
             />
             <SelectedGoalSection
               selectedGoal={selectedGoal}
