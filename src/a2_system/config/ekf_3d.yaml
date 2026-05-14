@@ -21,6 +21,19 @@ ekf_filter_node:
        true,  true,  true,    # vroll, vpitch, vyaw
        false, false, false]   # ax, ay, az (unused)
 
+    # ── A2 body odometry → independent planar velocity cue ─────────
+    # The Unitree SDK/body estimator publishes /odom through
+    # a2_state_publisher. Fuse only planar linear velocity so it can
+    # complement DLIO during gait-induced LiDAR/IMU noise without
+    # double-counting drifting body pose or yaw.
+    odom1: "/odom"
+    odom1_config:
+      [false, false, false,   # x, y, z position (unused)
+       false, false, false,   # roll, pitch, yaw (unused)
+       true,  true,  false,   # vx, vy from body odom; skip vz
+       false, false, false,   # angular velocity comes from DLIO + body IMU
+       false, false, false]   # ax, ay, az (unused)
+
     # ── Body IMU → orientation / angular velocity ───────────────
     # Unitree SDK IMU in base_link. We fuse angular velocity and
     # linear acceleration for roll/pitch stability. DLIO already
@@ -35,9 +48,11 @@ ekf_filter_node:
        false, false, false]   # linear acceleration (unused)
 
     # ── NDT global pose → absolute measurement ──────────────────
-    # The Autoware NDT scan matcher publishes in map frame.
-    # These pose corrections bound the drift DLIO accumulates.
-    pose0: "ndt_pose_with_covariance"
+    # Use the adapter-gated relocalization pose rather than raw NDT output.
+    # The adapter rejects stale, low-score, or jumpy matches before EKF fusion,
+    # so these map-frame corrections can bound DLIO drift without letting a bad
+    # scan match yank the filter.
+    pose0: "/a2/relocalization/pose"
     pose0_config:
       [true,  true,  true,    # x, y, z (map frame — absolute)
        true,  true,  true,    # roll, pitch, yaw
@@ -46,9 +61,10 @@ ekf_filter_node:
        false, false, false]
 
     # ── Output ──────────────────────────────────────────────────
-    # publish_tf: true because EKF is now the official source of
-    # map→odom.
-    publish_tf: true
+    # NDT relocalization owns map->odom and DLIO odometry owns odom->base_link.
+    # Keep EKF output as a diagnostic/fused odometry topic only to avoid
+    # duplicate TF authorities in the navigation tree.
+    publish_tf: false
     publish_acceleration: false
     print_diagnostics: false
 

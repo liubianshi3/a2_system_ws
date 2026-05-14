@@ -77,6 +77,16 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "missing command: $1"
 }
 
+run_privileged() {
+  if [[ "$(id -u)" -eq 0 ]]; then
+    "$@"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo "$@"
+  else
+    "$@"
+  fi
+}
+
 source_ros() {
   set +u
   source /opt/ros/humble/setup.bash
@@ -85,6 +95,10 @@ source_ros() {
   fi
   if [[ -f "${WORKSPACE}/install/setup.bash" ]]; then
     source "${WORKSPACE}/install/setup.bash"
+  fi
+  if ! ros2 pkg prefix direct_lidar_inertial_odometry >/dev/null 2>&1 && \
+    [[ -f "${WORKSPACE}/install/direct_lidar_inertial_odometry/share/direct_lidar_inertial_odometry/local_setup.bash" ]]; then
+    source "${WORKSPACE}/install/direct_lidar_inertial_odometry/share/direct_lidar_inertial_odometry/local_setup.bash"
   fi
   set -u
 }
@@ -101,12 +115,16 @@ kill_pattern() {
   done < <(pgrep -f "$pattern" 2>/dev/null || true)
   ((${#pids[@]} > 0)) || return 0
   kill "-${signal}" "${pids[@]}" >/dev/null 2>&1 || true
-  sudo kill "-${signal}" "${pids[@]}" >/dev/null 2>&1 || true
+  if [[ "$(id -u)" -ne 0 ]] && command -v sudo >/dev/null 2>&1; then
+    sudo kill "-${signal}" "${pids[@]}" >/dev/null 2>&1 || true
+  fi
 }
 
 stop_interference() {
   log "Stopping Unitree native SLAM service and known interference"
-  sudo systemctl stop "$UNITREE_SLAM_SERVICE" >/dev/null 2>&1 || true
+  if command -v systemctl >/dev/null 2>&1 && [[ ! -f /.dockerenv ]]; then
+    run_privileged systemctl stop "$UNITREE_SLAM_SERVICE" >/dev/null 2>&1 || true
+  fi
   local pattern
   for pattern in \
     "rosmaster" \
@@ -128,6 +146,8 @@ stop_interference() {
     "planner_server" \
     "bt_navigator" \
     "pointcloud_accumulator" \
+    "octomap_server" \
+    "octomap_mapping_node.py" \
     "dlio_odom_node" \
     "dlio_map_node" \
     "jt128_dlio_watchdog.py" \
@@ -151,6 +171,8 @@ stop_interference() {
     "slam_toolbox" \
     "amcl" \
     "pointcloud_accumulator" \
+    "octomap_server" \
+    "octomap_mapping_node.py" \
     "dlio_odom_node" \
     "dlio_map_node" \
     "jt128_dlio_watchdog.py" \
@@ -168,7 +190,7 @@ check_network() {
   if ! ip route get "$JT128_IP" | grep -q "dev ${JT128_IFACE}"; then
     warn "JT128 route is not using ${JT128_IFACE}; installing host route for ${JT128_IP}/32"
     ip route get "$JT128_IP" || true
-    sudo ip route replace "${JT128_IP}/32" dev "$JT128_IFACE" src "$iface_ip" || die "failed to install JT128 host route"
+    run_privileged ip route replace "${JT128_IP}/32" dev "$JT128_IFACE" src "$iface_ip" || die "failed to install JT128 host route"
   fi
   ip route get "$JT128_IP" | grep -q "dev ${JT128_IFACE}" || {
     ip route get "$JT128_IP" || true
@@ -209,7 +231,7 @@ require_cmd pkill
 mkdir -p "$LOG_DIR" "$MAP_ROOT"
 source_ros
 require_cmd ros2
-sudo sysctl -w net.core.rmem_max=2147483647 >/dev/null 2>&1 || true
+run_privileged sysctl -w net.core.rmem_max=2147483647 >/dev/null 2>&1 || true
 stop_interference
 check_network
 check_packages
