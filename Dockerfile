@@ -44,6 +44,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-humble-nav2-bringup \
         ros-humble-robot-localization \
         ros-humble-imu-tools \
+        ros-humble-octomap \
+        ros-humble-octomap-msgs \
+        ros-humble-octomap-ros \
+        ros-humble-octomap-server \
         ros-humble-pointcloud-to-laserscan \
         ros-humble-autoware-internal-debug-msgs \
         ros-humble-autoware-map-msgs \

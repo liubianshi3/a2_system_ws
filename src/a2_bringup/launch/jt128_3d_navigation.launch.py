@@ -6,8 +6,9 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, LogInfo, IncludeLaunchDescription, OpaqueFunction, SetLaunchConfiguration
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.conditions import IfCondition, UnlessCondition
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def _unitree_ddsc_env():
@@ -97,11 +98,12 @@ def generate_launch_description():
         [
             DeclareLaunchArgument("map_id", default_value=""),
             DeclareLaunchArgument("pcd_path", default_value=""),
-            DeclareLaunchArgument(
-                "map_root", default_value=str(Path.home() / "a2_system_ws" / "runtime" / "maps")
-            ),
-            DeclareLaunchArgument("start_static_tf", default_value="false"),
+            DeclareLaunchArgument("map_root", default_value=os.environ.get("A2_WORKSPACE", str(Path.home() / "a2_system_ws")) + "/runtime/maps"),
+            DeclareLaunchArgument("start_static_tf", default_value="true"),
             DeclareLaunchArgument("start_robot_state", default_value="true"),
+            DeclareLaunchArgument("start_task_manager", default_value="true"),
+            DeclareLaunchArgument("start_scan_mission", default_value="true"),
+
             DeclareLaunchArgument("start_safety", default_value="true"),
             DeclareLaunchArgument("enable_motion", default_value="false"),
             DeclareLaunchArgument("dry_run", default_value="true"),
@@ -128,7 +130,7 @@ def generate_launch_description():
                 parameters=[
                     f"{a2_system_share}/config/a2_sdk.yaml",
                     {
-                        "use_mock": False,
+                        "use_mock": ParameterValue(LaunchConfiguration("dry_run"), value_type=bool),
                         "allow_loopback": False,
                         "network_interface": LaunchConfiguration("sdk_interface"),
                         "use_sim_time": LaunchConfiguration("use_sim_time"),
@@ -221,18 +223,52 @@ def generate_launch_description():
                 output="screen",
             ),
             Node(
+                package="a2_system",
+                executable="auto_scan_mission.py",
+                name="auto_scan_mission",
+                condition=IfCondition(LaunchConfiguration("start_scan_mission")),
+                parameters=[
+                    f"{a2_system_share}/config/scan_mission_3d.yaml",
+                    {
+                        "enable_action_server": True,
+                        "dry_run": ParameterValue(LaunchConfiguration("dry_run"), value_type=bool),
+                        "waypoints_file": f"{a2_system_share}/config/scan_waypoints.example.yaml",
+                        "reports_root": os.path.join(
+                            os.environ.get("A2_WORKSPACE", str(Path.home() / "a2_system_ws")),
+                            "runtime",
+                            "reports",
+                            "scan_mission",
+                        ),
+                        "use_sim_time": LaunchConfiguration("use_sim_time"),
+                    },
+                ],
+                output="screen",
+            ),
+            Node(
+                package="a2_system",
+                executable="task_manager.py",
+                name="task_manager",
+                condition=IfCondition(LaunchConfiguration("start_task_manager")),
+                parameters=[
+                    f"{a2_system_share}/config/task_manager.yaml",
+                    {
+                        "runtime_mode": "",
+                        "navigation_backend": "nav2",
+                        "navigate_action_name": "/navigate_to_pose",
+                        "run_mission_action_name": "/run_mission",
+                        "use_sim_time": LaunchConfiguration("use_sim_time"),
+                    },
+                ],
+                output="screen",
+            ),
+            Node(
                 package="localization_manager",
                 executable="localization_gate",
                 name="localization_gate",
                 parameters=[
-                    f"{a2_system_share}/config/localization.yaml",
+                    f"{a2_system_share}/config/localization_3d.yaml",
                     {
-                        "runtime_mode": "real",
-                        "input_pose_topic": "/a2/relocalization/pose",
-                        "input_pose_msg_type": "geometry_msgs/msg/PoseWithCovarianceStamped",
-                        "max_pose_age_sec": 1.5,
-                        "max_xy_variance": 0.2,
-                        "max_yaw_variance": 0.2,
+                        "runtime_mode": "",
                         "use_sim_time": LaunchConfiguration("use_sim_time"),
                     },
                 ],
@@ -246,7 +282,7 @@ def generate_launch_description():
                         "ndt_status_topic": "/a2/relocalization/status",
                         "health_pub_topic": "/a2/ndt/healthy",
                         "health_status_topic": "/a2/ndt/health_status",
-                        "min_score": 0.5,
+                        "min_score": 2.3,
                         "consecutive_failures_threshold": 5,
                         "eval_frequency": 5.0,
                         "use_sim_time": LaunchConfiguration("use_sim_time"),
@@ -261,7 +297,7 @@ def generate_launch_description():
                 parameters=[
                     f"{a2_system_share}/config/safety.yaml",
                     {
-                        "runtime_mode": "real",
+                        "runtime_mode": "",
                         "lidar_topic": "/jt128/front/points",
                         "map_representation": "pointcloud_map_3d",
                         "require_map": False,
@@ -281,7 +317,7 @@ def generate_launch_description():
                 condition=IfCondition(LaunchConfiguration("start_safety")),
                 parameters=[
                     {
-                        "runtime_mode": "real",
+                        "runtime_mode": "",
                         "lidar_connected_topic": "/a2/lidar/connected",
                         "lidar_label": "jt128",
                         "use_sim_time": LaunchConfiguration("use_sim_time"),
@@ -320,15 +356,21 @@ def generate_launch_description():
                 package="a2_control_bridge",
                 executable="a2_control_bridge_node",
                 name="a2_control_bridge",
-                condition=IfCondition(LaunchConfiguration("enable_motion")),
                 additional_env=unitree_ddsc_env,
                 parameters=[
                     f"{a2_system_share}/config/motion_limits.yaml",
                     {
-                        "use_mock": False,
+                        "use_mock": ParameterValue(LaunchConfiguration("dry_run"), value_type=bool),
                         "allow_loopback": False,
-                        "runtime_mode": "real",
+                        "runtime_mode": PythonExpression([
+                            "'mock' if '",
+                            LaunchConfiguration("dry_run"),
+                            "'.lower() in ('1', 'true', 't', 'yes', 'y', 'on') else 'real'",
+                        ]),
                         "network_interface": LaunchConfiguration("control_interface"),
+                        "linear_x_sign": float(os.environ.get("A2_CONTROL_LINEAR_X_SIGN", "1.0")),
+                        "linear_y_sign": float(os.environ.get("A2_CONTROL_LINEAR_Y_SIGN", "1.0")),
+                        "yaw_sign": float(os.environ.get("A2_CONTROL_YAW_SIGN", "1.0")),
                         "use_sim_time": LaunchConfiguration("use_sim_time"),
                     },
                 ],

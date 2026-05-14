@@ -3,6 +3,7 @@ set -euo pipefail
 
 WORKSPACE="${A2_WORKSPACE:-$HOME/a2_system_ws}"
 MODE="standby"
+REQUESTED_MODE="standby"
 MAP_ID=""
 LIDAR_IFACE="${A2_JT128_INTERFACE:-net1}"
 SDK_IFACE="${A2_SDK_INTERFACE:-eth0}"
@@ -10,23 +11,35 @@ CONTROL_IFACE="${A2_CONTROL_INTERFACE:-$SDK_IFACE}"
 ENABLE_MOTION=false
 LIVE_MOTION=false
 STOP_EXISTING=1
+RUN_PREFLIGHT=1
+RUN_ID=""
 WEB_URL="${A2_WEB_URL:-http://127.0.0.1:8080}"
 LOG_DIR="${WORKSPACE}/runtime/logs"
+RECORD_DIR="${WORKSPACE}/runtime/test_records"
 WEB_LOG="${LOG_DIR}/web_console_manual_$(date +%Y%m%d_%H%M%S).log"
 WEB_STATE_FILE="${WORKSPACE}/runtime/web_stack_state.yaml"
 WEB_RUN_SCRIPT="${WORKSPACE}/web_console/scripts/run_backend.sh"
 STACK_SCRIPT="${WORKSPACE}/src/a2_system/tools/start_jt128_3d_stack.sh"
+PREFLIGHT_SCRIPT="${WORKSPACE}/src/a2_system/scripts/industrial_3d_nav_preflight.py"
+RECORD_SCRIPT="${WORKSPACE}/src/a2_system/scripts/append_3d_test_record.py"
 
 usage() {
   cat <<EOF
 Usage:
   $(basename "$0") [--mode standby] [--lidar-iface net1]
+  $(basename "$0") --mode auto [--lidar-iface net1] [--sdk-iface eth0]
   $(basename "$0") --mode mapping [--lidar-iface net1]
   $(basename "$0") --mode navigation --map-id MAP_ID [--lidar-iface net1] [--sdk-iface eth0] [--enable-motion] [--live-motion]
 
 Default behavior:
   Starts the Web backend directly and leaves Web stack state as "stopped".
   Open the Web page and choose mapping or navigation yourself.
+
+Auto behavior:
+  Finds the newest 3D pointcloud map under runtime/maps.
+  - If found, starts navigation in dry-run mode.
+  - If not found, starts mapping mode.
+  - Runs preflight and appends a CSV test record when navigation starts.
 
 Safety:
   --mode navigation defaults to dry-run.
@@ -51,6 +64,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --mode)
       MODE="$2"
+      REQUESTED_MODE="$2"
       shift 2
       ;;
     --map-id)
@@ -83,6 +97,14 @@ while [[ $# -gt 0 ]]; do
       STOP_EXISTING=0
       shift
       ;;
+    --no-preflight)
+      RUN_PREFLIGHT=0
+      shift
+      ;;
+    --run-id)
+      RUN_ID="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -93,13 +115,58 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ "$MODE" == "standby" || "$MODE" == "mapping" || "$MODE" == "navigation" ]] || die "mode must be standby, mapping, or navigation"
+[[ "$MODE" == "standby" || "$MODE" == "auto" || "$MODE" == "mapping" || "$MODE" == "navigation" ]] || die "mode must be standby, auto, mapping, or navigation"
 if [[ "$MODE" == "navigation" && -z "$MAP_ID" ]]; then
   die "--map-id is required for navigation mode"
 fi
 if [[ "$LIVE_MOTION" == "true" && "$ENABLE_MOTION" != "true" ]]; then
   die "--live-motion requires --enable-motion"
 fi
+
+source_ros() {
+  set +u
+  source /opt/ros/humble/setup.bash
+  if [[ -f "${WORKSPACE}/install/setup.bash" ]]; then
+    source "${WORKSPACE}/install/setup.bash"
+  fi
+  set -u
+}
+
+find_latest_3d_map() {
+  python3 - "$WORKSPACE" <<'PY'
+from pathlib import Path
+import sys
+
+workspace = Path(sys.argv[1])
+maps_root = workspace / "runtime" / "maps"
+candidates = []
+for metadata in maps_root.glob("*/metadata.yaml"):
+    map_dir = metadata.parent
+    pcd = map_dir / "pointcloud_map_3d.pcd"
+    if not pcd.exists() or pcd.stat().st_size <= 0:
+        continue
+    text = metadata.read_text(encoding="utf-8", errors="ignore")
+    if "pointcloud_map_3d" not in text:
+        continue
+    candidates.append((metadata.stat().st_mtime, map_dir.name))
+if candidates:
+    print(sorted(candidates)[-1][1])
+PY
+}
+
+resolve_auto_mode() {
+  [[ "$MODE" == "auto" ]] || return
+  local latest_map
+  latest_map="$(find_latest_3d_map || true)"
+  if [[ -n "$latest_map" ]]; then
+    MODE="navigation"
+    MAP_ID="$latest_map"
+    log "Auto mode selected navigation with latest 3D map: ${MAP_ID}"
+  else
+    MODE="mapping"
+    log "Auto mode selected mapping because no 3D pointcloud map was found"
+  fi
+}
 
 wait_http_ok() {
   local url="$1"
@@ -246,8 +313,57 @@ start_stack_mode() {
   write_web_state "$MODE" "Started ${MODE} through start_jt128_3d_closed_loop.sh"
 }
 
+run_navigation_preflight_and_record() {
+  [[ "$MODE" == "navigation" && "$RUN_PREFLIGHT" -eq 1 ]] || return
+  [[ -f "$PREFLIGHT_SCRIPT" ]] || {
+    warn "preflight script not found: $PREFLIGHT_SCRIPT"
+    return
+  }
+  [[ -f "$RECORD_SCRIPT" ]] || {
+    warn "record script not found: $RECORD_SCRIPT"
+    return
+  }
+
+  mkdir -p "$RECORD_DIR" "$LOG_DIR"
+  local effective_run_id="${RUN_ID:-auto_$(date +%Y%m%d_%H%M%S)}"
+  local preflight_json="${RECORD_DIR}/${effective_run_id}_preflight.json"
+  local preflight_log="${LOG_DIR}/${effective_run_id}_preflight.log"
+  local result="PASS"
+
+  log "Waiting briefly before preflight"
+  sleep 8
+  log "Running industrial 3D preflight; output=${preflight_json}"
+  if ! bash -lc "
+    source /opt/ros/humble/setup.bash
+    source '${WORKSPACE}/install/setup.bash'
+    python3 '${PREFLIGHT_SCRIPT}' --output '${preflight_json}' --timeout-sec 8
+  " >"$preflight_log" 2>&1; then
+    result="FAIL"
+    warn "Preflight failed; see ${preflight_log}"
+  fi
+
+  python3 "$RECORD_SCRIPT" \
+    --run-id "$effective_run_id" \
+    --run-type real_robot \
+    --robot-id "${A2_ROBOT_ID:-a2-jt128}" \
+    --site "${A2_TEST_SITE:-unspecified}" \
+    --operator "${A2_OPERATOR:-unspecified}" \
+    --software-ref "$(git -C "$WORKSPACE" rev-parse --short HEAD 2>/dev/null || echo local-working-tree)" \
+    --command "$(basename "$0") --mode ${REQUESTED_MODE} resolved=${MODE} map_id=${MAP_ID:-none}" \
+    --map-id "${MAP_ID:-}" \
+    --environment "${A2_TEST_ENVIRONMENT:-unspecified}" \
+    --result "$result" \
+    --collision-count 0 \
+    --near-collision-count 0 \
+    --estop-count 0 \
+    --notes "auto launcher preflight result=${result}; log=${preflight_log}; json=${preflight_json}" \
+    --next-action "review preflight before enabling live motion"
+}
+
 cd "$WORKSPACE"
 command -v curl >/dev/null 2>&1 || die "missing command: curl"
+source_ros
+resolve_auto_mode
 
 if [[ "$MODE" == "standby" ]]; then
   if [[ "$STOP_EXISTING" -eq 1 ]]; then
@@ -259,6 +375,7 @@ if [[ "$MODE" == "standby" ]]; then
 else
   start_web_backend
   start_stack_mode
+  run_navigation_preflight_and_record
 fi
 
 echo
