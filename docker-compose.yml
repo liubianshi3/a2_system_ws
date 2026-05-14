@@ -1,10 +1,7 @@
 services:
   a2_sim:
-    container_name: a2_sim
-    image: a2-sim:dev
-    build:
-      context: ../device-navigation-sim
-      dockerfile: Dockerfile
+    # container_name intentionally omitted so multiple compose projects can coexist.
+    image: registry.cn-hangzhou.aliyuncs.com/linuxsuren/device-navigation-sim:dev
     init: true
     privileged: true
     restart: unless-stopped
@@ -94,8 +91,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        A2_BUILD_PROFILE: ${A2_BUILD_PROFILE:-sim-smoke}
     init: true
     privileged: true
     restart: unless-stopped
