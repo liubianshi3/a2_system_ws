@@ -39,7 +39,7 @@ def generate_launch_description():
             ),
 
             # Bridge: nav_msgs/Odometry → PoseWithCovarianceStamped
-            # Converts /odometry/filtered → ekf_pose_with_covariance
+            # Converts local fused odometry → /a2/ndt/open_loop_pose
             # so the Autoware NDT scan matcher can consume it as initial pose.
             Node(
                 package="a2_system",
@@ -48,8 +48,8 @@ def generate_launch_description():
                 condition=IfCondition(LaunchConfiguration("enable_ekf")),
                 parameters=[
                     {
-                        "input_topic": "/odometry/filtered",
-                        "output_topic": "ekf_pose_with_covariance",
+                        "input_topic": "/odometry/local",
+                        "output_topic": "/a2/ndt/open_loop_pose",
                         "use_sim_time": use_sim_time,
                     }
                 ],

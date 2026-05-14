@@ -47,6 +47,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     ros-humble-tf-transformations \
     ros-humble-robot-localization \
     ros-humble-imu-tools \
+    ros-humble-octomap \
+    ros-humble-octomap-msgs \
+    ros-humble-octomap-ros \
+    ros-humble-octomap-server \
     ros-humble-pointcloud-to-laserscan \
     ros-humble-autoware-internal-debug-msgs \
     ros-humble-autoware-map-msgs \
@@ -96,7 +100,18 @@ RUN sed -i 's/\r$//' /usr/local/bin/a2-web-entrypoint \
     && find /opt/a2_system_ws/web_console/scripts /opt/a2_system_ws/src/a2_system/tools -type f -name "*.sh" -print0 | xargs -0 sed -i 's/\r$//' \
     && chmod +x /usr/local/bin/a2-web-entrypoint \
     && chmod +x web_console/scripts/*.sh src/a2_system/tools/*.sh \
-    && mkdir -p runtime/maps runtime/logs
+    && mkdir -p runtime/maps runtime/logs \
+    && rm -rf src/third_party/autoware_localization/autoware_utils_pkg \
+    && source /opt/ros/humble/setup.bash \
+    && OUR_PACKAGES=$(colcon list \
+        | grep -vE 'autoware_|direct_lidar_inertial_odometry|fast_lio|livox_ros_driver2' \
+        | awk '{print $1}' \
+        | tr '\n' ' ') \
+    && colcon build --packages-select ${OUR_PACKAGES} \
+    && pip3 config set global.index-url ${PIP_INDEX_URL} \
+    && pip3 install --no-cache-dir -r web_console/backend/requirements.txt \
+    && mkdir -p runtime/maps runtime/logs \
+    && rm -rf build log
 
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/a2-web-entrypoint"]
