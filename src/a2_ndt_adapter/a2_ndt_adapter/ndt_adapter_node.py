@@ -122,6 +122,7 @@ class A2NdtAdapter(Node):
         self.declare_parameter('map_frame', 'map')
         self.declare_parameter('odom_frame', 'odom')
         self.declare_parameter('base_frame', 'base_link')
+        self.declare_parameter('publish_tf', True)
         
         # Internal topics (to/from NDT)
         self.declare_parameter('ndt_pose_topic', 'ndt_pose_with_covariance')
@@ -129,22 +130,23 @@ class A2NdtAdapter(Node):
         self.declare_parameter('ndt_score_topic', 'transform_probability')
         self.declare_parameter('score_topic', 'transform_probability')
         self.declare_parameter('iteration_topic', 'iteration_num')
-        self.declare_parameter('score_threshold', 0.5)
+        self.declare_parameter('score_threshold', 2.3)
         self.declare_parameter('score_min_is_good', True)
         self.declare_parameter('odom_timeout_sec', 1.0)
-        self.declare_parameter('score_timeout_sec', 1.0)
+        self.declare_parameter('score_timeout_sec', 12.0)
         self.declare_parameter('max_map_to_odom_translation_step', 1.0)
         self.declare_parameter('max_map_to_odom_rotation_step_deg', 20.0)
         self.declare_parameter('map_service_min_radius', 1.0)
-        self.declare_parameter('map_service_max_radius', 150.0)
-        self.declare_parameter('map_service_margin_m', 5.0)
-        self.declare_parameter('map_service_max_points', 200000)
+        self.declare_parameter('map_service_max_radius', 25.0)
+        self.declare_parameter('map_service_margin_m', 3.0)
+        self.declare_parameter('map_service_max_points', 60000)
         self.declare_parameter('map_cell_id_prefix', 'a2_map_cell')
         
         # State
         self.last_odom_to_base = None
         self.map_to_odom = np.eye(4)
         self.has_seed = False
+        self.awaiting_first_ndt_fix = False
         self.last_score = -1.0
         self.last_score_stamp = None
         self.last_odom_stamp = None
@@ -176,12 +178,14 @@ class A2NdtAdapter(Node):
 
         # Timer for status
         self.create_timer(1.0, self.publish_periodic_status)
+        self.create_timer(0.05, self.publish_periodic_tf)
 
         self.get_logger().info("A2 NDT Adapter initialized.")
 
     def on_odom(self, msg: Odometry):
         self.last_odom_to_base = pose_to_matrix(msg.pose.pose.position, msg.pose.pose.orientation)
         self.last_odom_stamp = self.get_clock().now()
+        self.publish_map_to_odom_tf()
 
         # If we have a seed, provide the initial guess to NDT
         if self.has_seed:
@@ -206,39 +210,51 @@ class A2NdtAdapter(Node):
     def on_ndt_pose(self, msg: PoseWithCovarianceStamped):
         if self.last_odom_to_base is None:
             self.publish_status(False, "rejected", "ndt_pose_without_odom")
+            self.get_logger().warn("NDT pose rejected: no odom available", throttle_duration_sec=2.0)
             return
         if not self.odom_is_fresh():
+            age = (self.get_clock().now() - self.last_odom_stamp).nanoseconds * 1e-9 if self.last_odom_stamp else -1
             self.publish_status(False, "rejected", "odom_stale")
+            self.get_logger().warn(f"NDT pose rejected: odom stale ({age:.1f}s old)", throttle_duration_sec=2.0)
             return
         if not self.score_is_fresh():
+            age = (self.get_clock().now() - self.last_score_stamp).nanoseconds * 1e-9 if self.last_score_stamp else -1
             self.publish_status(False, "rejected", "score_stale")
+            self.get_logger().warn(f"NDT pose rejected: score stale ({age:.1f}s old)", throttle_duration_sec=2.0)
             return
         if not self.current_score_is_acceptable():
             self.publish_status(False, "rejected", "score_below_threshold")
+            threshold = float(self.get_parameter('score_threshold').value)
+            self.get_logger().warn(
+                f"NDT pose rejected: score {self.last_score:.3f} < threshold {threshold:.1f}",
+                throttle_duration_sec=0.5,
+            )
             return
 
         map_to_base = pose_to_matrix(msg.pose.pose.position, msg.pose.pose.orientation)
         candidate_map_to_odom = map_to_base @ np.linalg.inv(self.last_odom_to_base)
-        if self.has_seed and not self.correction_step_is_bounded(candidate_map_to_odom):
+        if (
+            self.has_seed
+            and not self.awaiting_first_ndt_fix
+            and not self.correction_step_is_bounded(candidate_map_to_odom)
+        ):
+            delta = candidate_map_to_odom @ np.linalg.inv(self.map_to_odom)
+            translation = float(np.linalg.norm(delta[:3, 3]))
+            rotation_trace = (float(np.trace(delta[:3, :3])) - 1.0) * 0.5
+            rotation = math.degrees(math.acos(max(-1.0, min(1.0, rotation_trace))))
             self.publish_status(False, "rejected", "map_to_odom_jump")
+            self.get_logger().warn(
+                f"NDT correction step too large: {translation:.2f}m, {rotation:.1f}deg "
+                f"(limits: 1.0m, 20deg)",
+                throttle_duration_sec=0.5,
+            )
             return
 
         self.map_to_odom = candidate_map_to_odom
         self.has_seed = True
+        self.awaiting_first_ndt_fix = False
 
-        tf_msg = TransformStamped()
-        tf_msg.header.stamp = msg.header.stamp
-        tf_msg.header.frame_id = self.get_parameter('map_frame').value
-        tf_msg.child_frame_id = self.get_parameter('odom_frame').value
-        tf_msg.transform.translation.x = float(self.map_to_odom[0, 3])
-        tf_msg.transform.translation.y = float(self.map_to_odom[1, 3])
-        tf_msg.transform.translation.z = float(self.map_to_odom[2, 3])
-        qx, qy, qz, qw = matrix_to_quaternion(self.map_to_odom[:3, :3])
-        tf_msg.transform.rotation.x = qx
-        tf_msg.transform.rotation.y = qy
-        tf_msg.transform.rotation.z = qz
-        tf_msg.transform.rotation.w = qw
-        # self.tf_broadcaster.sendTransform(tf_msg) # EKF now handles TF publishing
+        self.publish_map_to_odom_tf()
 
         # Relay to A2 interface
         self.pose_pub.publish(msg)
@@ -255,11 +271,34 @@ class A2NdtAdapter(Node):
         map_to_base = pose_to_matrix(msg.pose.pose.position, msg.pose.pose.orientation)
         self.map_to_odom = map_to_base @ np.linalg.inv(self.last_odom_to_base)
         self.has_seed = True
+        self.awaiting_first_ndt_fix = True
         self.get_logger().info("Initial pose set, seeding NDT.")
+        self.publish_map_to_odom_tf()
 
         # Also relay to NDT's initial pose topic
         self.ndt_initial_pose_pub.publish(msg)
         self.publish_status(True, "seeded", "initialpose_received")
+
+    def publish_periodic_tf(self):
+        self.publish_map_to_odom_tf()
+
+    def publish_map_to_odom_tf(self):
+        if not self.has_seed or not bool(self.get_parameter('publish_tf').value):
+            return
+
+        tf_msg = TransformStamped()
+        tf_msg.header.stamp = self.get_clock().now().to_msg()
+        tf_msg.header.frame_id = self.get_parameter('map_frame').value
+        tf_msg.child_frame_id = self.get_parameter('odom_frame').value
+        tf_msg.transform.translation.x = float(self.map_to_odom[0, 3])
+        tf_msg.transform.translation.y = float(self.map_to_odom[1, 3])
+        tf_msg.transform.translation.z = float(self.map_to_odom[2, 3])
+        qx, qy, qz, qw = matrix_to_quaternion(self.map_to_odom[:3, :3])
+        tf_msg.transform.rotation.x = qx
+        tf_msg.transform.rotation.y = qy
+        tf_msg.transform.rotation.z = qz
+        tf_msg.transform.rotation.w = qw
+        self.tf_broadcaster.sendTransform(tf_msg)
 
     def on_map(self, msg: PointCloud2):
         self.cached_map = msg
@@ -283,8 +322,16 @@ class A2NdtAdapter(Node):
             self.get_logger().error(f"Failed to parse cached pointcloud map: {exc}")
 
     def on_score(self, msg: Float32Stamped):
+        prev_score = self.last_score
         self.last_score = float(msg.data)
         self.last_score_stamp = self.get_clock().now()
+        threshold = float(self.get_parameter('score_threshold').value)
+        acceptable = self.last_score >= threshold
+        self.get_logger().info(
+            f"NDT score: {self.last_score:.3f} (prev={prev_score:.3f}, "
+            f"threshold={threshold:.1f}, acceptable={acceptable})",
+            throttle_duration_sec=0.5,
+        )
 
     def on_iteration(self, msg: Int32Stamped):
         self.last_iteration_num = int(msg.data)
@@ -385,10 +432,17 @@ class A2NdtAdapter(Node):
     def publish_periodic_status(self):
         if not self.has_seed:
             self.publish_status(False, "waiting_seed", "send_initialpose")
+            self.get_logger().info("NDT status: waiting for initial pose (/initialpose)", throttle_duration_sec=5.0)
         elif self.last_odom_to_base is None:
             self.publish_status(False, "waiting_odom", "no_dlio_odom")
+            self.get_logger().info("NDT status: waiting for DLIO odom (/jt128/dlio/odom)", throttle_duration_sec=5.0)
+        elif self.last_score < 0:
+            self.publish_status(False, "waiting_first_score", "ndt_not_scored_yet")
+            self.get_logger().info("NDT status: waiting for first NDT score", throttle_duration_sec=5.0)
         elif not self.score_is_fresh():
+            age = (self.get_clock().now() - self.last_score_stamp).nanoseconds * 1e-9 if self.last_score_stamp else -1.0
             self.publish_status(False, "waiting_score", "no_recent_ndt_score")
+            self.get_logger().info(f"NDT status: score stale ({age:.1f}s), last_score={self.last_score:.3f}", throttle_duration_sec=5.0)
 
     def publish_status(self, ready, state, reason):
         score = self.last_score if self.last_score is not None else -1.0

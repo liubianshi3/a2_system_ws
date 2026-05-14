@@ -13,6 +13,9 @@ a2_control_bridge:
     max_linear_x: 0.4
     max_linear_y: 0.25
     max_yaw_rate: 0.5
+    linear_x_sign: 1.0
+    linear_y_sign: 1.0
+    yaw_sign: 1.0
     cmd_timeout_sec: 0.5
     control_hz: 20.0
     allow_motion_without_map: false

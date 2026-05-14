@@ -14,6 +14,7 @@ docker run -d \
   --net host \
   --privileged \
   -e PORT="${PORT}" \
+  -e A2_DOCKER_START_MODE=standby \
   -v "${HOST_MAP_ROOT}:/opt/a2_system_ws/runtime/maps" \
   -v "${HOST_LOG_ROOT}:/opt/a2_system_ws/runtime/logs" \
   "${IMAGE_NAME}" >/dev/null
