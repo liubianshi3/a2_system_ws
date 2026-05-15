@@ -369,6 +369,14 @@ def test_jt128_navigation_uses_relaxed_ndt_correction_limits_for_real_maps():
     assert "max_map_to_odom_rotation_step_deg" in launch
 
 
+def test_jt128_navigation_lifecycle_manages_collision_monitor():
+    root = Path(__file__).resolve().parents[3]
+    launch = (root / "src/a2_bringup/launch/jt128_3d_navigation.launch.py").read_text(encoding="utf-8")
+
+    assert "lifecycle_manager_collision_monitor" in launch
+    assert '"node_names": ["collision_monitor"]' in launch
+
+
 def test_stack_process_patterns_include_3d_ndt_navigation_nodes():
     root = Path(__file__).resolve().parents[3]
     stack_control = (root / "web_console/backend/stack_control.py").read_text(encoding="utf-8")

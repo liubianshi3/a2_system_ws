@@ -236,6 +236,20 @@ def generate_launch_description():
                 ],
                 output="screen",
             ),
+            Node(
+                package="nav2_lifecycle_manager",
+                executable="lifecycle_manager",
+                name="lifecycle_manager_collision_monitor",
+                parameters=[
+                    {
+                        "autostart": True,
+                        "bond_timeout": 12.0,
+                        "node_names": ["collision_monitor"],
+                        "use_sim_time": LaunchConfiguration("use_sim_time"),
+                    },
+                ],
+                output="screen",
+            ),
             # ── Battery publisher → /a2/battery ──
             Node(
                 package="a2_system",
