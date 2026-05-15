@@ -288,6 +288,24 @@ def test_docker_image_makes_a2_system_python_scripts_executable():
     assert "chmod +x src/a2_system/scripts/*.py" in dockerfile
 
 
+def test_dlio_mapping_launch_uses_si_imu_converter():
+    root = Path(__file__).resolve().parents[3]
+    launch = (root / "src/a2_bringup/launch/dlio_mapping.launch.py").read_text(encoding="utf-8")
+
+    assert "imu_to_si_converter.py" in launch
+    assert "/jt128/front/imu_si" in launch
+    assert "start_imu_si_converter" in launch
+
+
+def test_web_bridge_falls_back_to_dlio_odom_pose_when_relocalization_missing():
+    root = Path(__file__).resolve().parents[3]
+    bridge = (root / "web_console/backend/ros_bridge.py").read_text(encoding="utf-8")
+
+    assert "def _should_use_odom_pose_fallback" in bridge
+    assert "def _pose_from_odom" in bridge
+    assert "source=self.config.ros.odom_topic" in bridge
+
+
 def test_mapping_contract_accepts_slam_toolbox_and_native_fallbacks():
     mapping_patterns = {pattern for _, _, pattern in MAPPING_NODES}
 

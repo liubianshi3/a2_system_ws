@@ -22,6 +22,7 @@ install(PROGRAMS
   scripts/goal_pose_3d_smoke_test.py
   scripts/industrial_3d_closed_loop_check.py
   scripts/industrial_3d_nav_preflight.py
+  scripts/imu_to_si_converter.py
   scripts/jt128_dlio_watchdog.py
   scripts/nav2_corridor_gate.py
   scripts/nav_contract_check.py
@@ -58,6 +59,7 @@ install(PROGRAMS
   scripts/goal_pose_3d_smoke_test.py
   scripts/industrial_3d_closed_loop_check.py
   scripts/industrial_3d_nav_preflight.py
+  scripts/imu_to_si_converter.py
   scripts/jt128_dlio_watchdog.py
   scripts/nav2_corridor_gate.py
   scripts/nav_contract_check.py

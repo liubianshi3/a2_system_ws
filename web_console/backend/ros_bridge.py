@@ -846,10 +846,20 @@ class RosBridgeNode(Node):
         self._publish("health", self.get_health_dict())
 
     def _on_localization_odom(self, msg: Odometry) -> None:
+        robot_pose = self._pose_from_odom(msg, source=self.config.ros.localization_pose_topic)
+        with self._lock:
+            self.pose = robot_pose
+            self.health.pose_received = True
+            self.health.last_pose_update = robot_pose.stamp
+            self._last_pose_monotonic = time.monotonic()
+        self._publish("pose", dump_model(robot_pose))
+        self._publish("health", self.get_health_dict())
+
+    def _pose_from_odom(self, msg: Odometry, *, source: str) -> RobotPose:
         pose = msg.pose.pose
-        robot_pose = RobotPose(
+        return RobotPose(
             available=True,
-            source=self.config.ros.localization_pose_topic,
+            source=source,
             frame_id=msg.header.frame_id,
             stamp=now_iso(),
             x=pose.position.x,
@@ -862,19 +872,31 @@ class RosBridgeNode(Node):
             ),
             stale=False,
         )
-        with self._lock:
-            self.pose = robot_pose
-            self.health.pose_received = True
-            self.health.last_pose_update = robot_pose.stamp
-            self._last_pose_monotonic = time.monotonic()
-        self._publish("pose", dump_model(robot_pose))
-        self._publish("health", self.get_health_dict())
+
+    def _should_use_odom_pose_fallback(self, now: float | None = None) -> bool:
+        current = time.monotonic() if now is None else now
+        if self.pose.source == self.config.ros.odom_topic:
+            return True
+        if self._last_pose_monotonic <= 0.0:
+            return True
+        return current - self._last_pose_monotonic > self.config.health.pose_stale_sec
 
     def _on_odom(self, msg: Odometry) -> None:
+        now = time.monotonic()
+        fallback_pose: RobotPose | None = None
         with self._lock:
             self.status.velocity_linear_x = msg.twist.twist.linear.x
             self.status.velocity_angular_z = msg.twist.twist.angular.z
+            if self._should_use_odom_pose_fallback(now):
+                fallback_pose = self._pose_from_odom(msg, source=self.config.ros.odom_topic)
+                self.pose = fallback_pose
+                self.health.pose_received = True
+                self.health.last_pose_update = fallback_pose.stamp
+                self._last_pose_monotonic = now
         self._publish("status", dump_model(self.status))
+        if fallback_pose is not None:
+            self._publish("pose", dump_model(fallback_pose))
+            self._publish("health", self.get_health_dict())
 
     def _on_tf(self, msg: TFMessage) -> None:
         if not msg.transforms:
