@@ -83,6 +83,7 @@ class _RobotDogPb2:
     POSTURE_TYPE_STRETCH = 4
     MOTION_AUTHORIZATION_STATE_UNKNOWN = 1
     MOTION_AUTHORIZATION_STATE_STAND_DOWN = 2
+    MOTION_AUTHORIZATION_STATE_STANDING_NOT_AUTHORIZED = 3
     MOTION_AUTHORIZATION_STATE_MANUAL_START_REQUIRED = 4
     MOTION_AUTHORIZATION_STATE_AUTHORIZED = 5
     MOTION_AUTHORIZATION_ACTION_NONE = 1
@@ -338,23 +339,24 @@ def test_get_control_state_returns_latest_structured_state() -> None:
     assert response.last_command == "stand_up"
 
 
-def test_get_motion_authorization_reports_manual_start_when_standing_without_move_authorization() -> None:
+def test_get_motion_authorization_reports_software_authorization_required_when_standing() -> None:
     node = _FakeNode()
     node.control_state.last_command = "stand_up"
+    node.snapshot.status.raw_state.motion_mode = 2
     service = _service(node)
 
     response = asyncio.run(service.GetMotionAuthorization(types.SimpleNamespace(device_id="a2"), _Context()))
 
     assert response.success is False
-    assert response.state == _RobotDogPb2.MOTION_AUTHORIZATION_STATE_MANUAL_START_REQUIRED
-    assert response.required_action == _RobotDogPb2.MOTION_AUTHORIZATION_ACTION_PRESS_REMOTE_START
+    assert response.state == _RobotDogPb2.MOTION_AUTHORIZATION_STATE_STANDING_NOT_AUTHORIZED
+    assert response.required_action == _RobotDogPb2.MOTION_AUTHORIZATION_ACTION_NONE
     assert response.standing is True
     assert response.motion_authorized is False
-    assert response.manual_start_required is True
-    assert response.error_code == "manual_start_required"
+    assert response.manual_start_required is False
+    assert response.error_code == "motion_authorization_required"
 
 
-def test_authorize_motion_requires_stand_up_before_manual_start() -> None:
+def test_authorize_motion_requires_stand_up_before_software_authorization() -> None:
     node = _FakeNode()
     node.control_state.last_command = "stand_down"
     node.snapshot.status.raw_state.position = [0.0, 0.0, 0.08]
@@ -382,10 +384,10 @@ def test_motion_authorization_uses_successful_stand_command_before_unitree_body_
     response = asyncio.run(service.GetMotionAuthorization(types.SimpleNamespace(device_id="a2"), _Context()))
 
     assert response.success is False
-    assert response.state == _RobotDogPb2.MOTION_AUTHORIZATION_STATE_MANUAL_START_REQUIRED
-    assert response.required_action == _RobotDogPb2.MOTION_AUTHORIZATION_ACTION_PRESS_REMOTE_START
+    assert response.state == _RobotDogPb2.MOTION_AUTHORIZATION_STATE_STANDING_NOT_AUTHORIZED
+    assert response.required_action == _RobotDogPb2.MOTION_AUTHORIZATION_ACTION_NONE
     assert response.standing is True
-    assert response.error_code == "manual_start_required"
+    assert response.error_code == "motion_authorization_required"
 
 
 def test_motion_authorization_uses_unitree_motion_mode_as_primary_posture_signal() -> None:
@@ -399,9 +401,41 @@ def test_motion_authorization_uses_unitree_motion_mode_as_primary_posture_signal
     response = asyncio.run(service.GetMotionAuthorization(types.SimpleNamespace(device_id="a2"), _Context()))
 
     assert response.success is False
-    assert response.state == _RobotDogPb2.MOTION_AUTHORIZATION_STATE_MANUAL_START_REQUIRED
-    assert response.required_action == _RobotDogPb2.MOTION_AUTHORIZATION_ACTION_PRESS_REMOTE_START
-    assert response.error_code == "manual_start_required"
+    assert response.state == _RobotDogPb2.MOTION_AUTHORIZATION_STATE_STANDING_NOT_AUTHORIZED
+    assert response.required_action == _RobotDogPb2.MOTION_AUTHORIZATION_ACTION_NONE
+    assert response.error_code == "motion_authorization_required"
+
+
+def test_get_motion_authorization_treats_unitree_locomotion_mode_as_authorized() -> None:
+    node = _FakeNode()
+    node.control_state.last_command = "none"
+    node.snapshot.status.raw_state.body_height = 0.0
+    node.snapshot.status.raw_state.motion_mode = 3
+    service = _service(node)
+
+    response = asyncio.run(service.GetMotionAuthorization(types.SimpleNamespace(device_id="a2"), _Context()))
+
+    assert response.success is True
+    assert response.state == _RobotDogPb2.MOTION_AUTHORIZATION_STATE_AUTHORIZED
+    assert response.required_action == _RobotDogPb2.MOTION_AUTHORIZATION_ACTION_NONE
+    assert response.motion_authorized is True
+    assert response.manual_start_required is False
+
+
+def test_authorize_motion_calls_balance_stand_as_software_authorization() -> None:
+    node = _FakeNode()
+    node.control_state.last_command = "stand_up"
+    node.snapshot.status.raw_state.motion_mode = 2
+    service = _service(node)
+
+    response = asyncio.run(service.AuthorizeMotion(types.SimpleNamespace(device_id="a2"), _Context()))
+
+    assert response.success is True
+    assert response.state == _RobotDogPb2.MOTION_AUTHORIZATION_STATE_AUTHORIZED
+    assert response.required_action == _RobotDogPb2.MOTION_AUTHORIZATION_ACTION_NONE
+    assert response.motion_authorized is True
+    assert response.manual_start_required is False
+    assert node.motion_commands == [("balance_stand", 0, 0.0, False)]
 
 
 def test_motion_authorization_reports_stand_down_from_unitree_lie_down_mode() -> None:

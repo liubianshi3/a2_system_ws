@@ -737,12 +737,14 @@ class A2GrpcServices:
             _, raw_state, control_state = self._snapshot_and_control_state(node)
             unknown_state = self._motion_auth_constant("MOTION_AUTHORIZATION_STATE_UNKNOWN", 1)
             stand_down_state = self._motion_auth_constant("MOTION_AUTHORIZATION_STATE_STAND_DOWN", 2)
-            manual_start_state = self._motion_auth_constant("MOTION_AUTHORIZATION_STATE_MANUAL_START_REQUIRED", 4)
+            standing_not_authorized_state = self._motion_auth_constant(
+                "MOTION_AUTHORIZATION_STATE_STANDING_NOT_AUTHORIZED",
+                3,
+            )
             authorized_state = self._motion_auth_constant("MOTION_AUTHORIZATION_STATE_AUTHORIZED", 5)
             moving_state = self._motion_auth_constant("MOTION_AUTHORIZATION_STATE_MOVING", authorized_state)
             none_action = self._motion_auth_constant("MOTION_AUTHORIZATION_ACTION_NONE", 1)
             stand_up_action = self._motion_auth_constant("MOTION_AUTHORIZATION_ACTION_STAND_UP", 2)
-            remote_start_action = self._motion_auth_constant("MOTION_AUTHORIZATION_ACTION_PRESS_REMOTE_START", 3)
 
             runtime_mode = str(getattr(control_state, "runtime_mode", "") or "")
             last_command = str(getattr(control_state, "last_command", "") or "").lower()
@@ -845,7 +847,11 @@ class A2GrpcServices:
                     "sdk_code": sdk_code,
                 }
 
-            motion_authorized = last_command in {"move", "walk"} and sdk_code == 0 and not last_error_code
+            locomotion_ready_modes = {3}
+            motion_authorized = (
+                motion_mode in locomotion_ready_modes
+                or (last_command in {"balance_stand", "move", "walk"} and sdk_code == 0 and not last_error_code)
+            )
             if motion_authorized:
                 return {
                     "success": True,
@@ -864,13 +870,13 @@ class A2GrpcServices:
 
             return {
                 "success": False,
-                "message": "press remote Start after the robot is standing",
-                "error_code": "manual_start_required",
-                "state": manual_start_state,
-                "required_action": remote_start_action,
+                "message": "call AuthorizeMotion after the robot is standing",
+                "error_code": "motion_authorization_required",
+                "state": standing_not_authorized_state,
+                "required_action": none_action,
                 "standing": True,
                 "motion_authorized": False,
-                "manual_start_required": True,
+                "manual_start_required": False,
                 "motion_mode": motion_mode,
                 "gait_type": gait_type,
                 "runtime_mode": runtime_mode,
@@ -1186,8 +1192,53 @@ class A2GrpcServices:
         async def AuthorizeMotion(self, request, context):
             node = await self.p._node_or_abort(context)
             values = self._infer_motion_authorization(node)
-            values["timestamp"] = _now_ms()
-            return self._motion_auth_response(self.p.robot_dog_pb2.AuthorizeMotionResponse, **values)
+            if not values.get("standing", False) or values.get("motion_authorized", False):
+                values["timestamp"] = _now_ms()
+                return self._motion_auth_response(self.p.robot_dog_pb2.AuthorizeMotionResponse, **values)
+
+            try:
+                result = await self._call_motion_command(context, command="balance_stand")
+            except RosBridgeError as exc:
+                return self._motion_auth_response(
+                    self.p.robot_dog_pb2.AuthorizeMotionResponse,
+                    success=False,
+                    message=str(exc),
+                    error_code="ros_bridge_error",
+                    state=values.get("state", 0),
+                    required_action=values.get("required_action", 0),
+                    standing=values.get("standing", False),
+                    motion_authorized=False,
+                    manual_start_required=False,
+                    motion_mode=values.get("motion_mode", 0),
+                    gait_type=values.get("gait_type", 0),
+                    runtime_mode=values.get("runtime_mode", ""),
+                    timestamp=_now_ms(),
+                    sdk_code=0,
+                )
+
+            success = bool(getattr(result, "success", False))
+            error_code = str(getattr(result, "error_code", "") or ("ok" if success else "motion_authorization_failed"))
+            return self._motion_auth_response(
+                self.p.robot_dog_pb2.AuthorizeMotionResponse,
+                success=success,
+                message=str(
+                    getattr(result, "message", "")
+                    or ("motion authorization accepted: balance_stand" if success else "motion authorization failed")
+                ),
+                error_code=error_code,
+                state=self._motion_auth_constant("MOTION_AUTHORIZATION_STATE_AUTHORIZED", 5)
+                if success
+                else values.get("state", 0),
+                required_action=self._motion_auth_constant("MOTION_AUTHORIZATION_ACTION_NONE", 1),
+                standing=True,
+                motion_authorized=success,
+                manual_start_required=False,
+                motion_mode=values.get("motion_mode", 0),
+                gait_type=values.get("gait_type", 0),
+                runtime_mode=str(getattr(result, "runtime_mode", "") or values.get("runtime_mode", "")),
+                timestamp=_now_ms(),
+                sdk_code=int(getattr(result, "sdk_code", 0) or 0),
+            )
 
         async def ReleaseMotionAuthorization(self, request, context):
             node = await self.p._node_or_abort(context)
@@ -1205,7 +1256,7 @@ class A2GrpcServices:
                     required_action=self._motion_auth_constant("MOTION_AUTHORIZATION_ACTION_STOP", 4),
                     standing=current.get("standing", False),
                     motion_authorized=False,
-                    manual_start_required=bool(current.get("standing", False)),
+                    manual_start_required=False,
                     motion_mode=current.get("motion_mode", 0),
                     gait_type=current.get("gait_type", 0),
                     runtime_mode=current.get("runtime_mode", ""),
@@ -1219,13 +1270,13 @@ class A2GrpcServices:
                 success=success,
                 message=str(getattr(result, "message", "") or ("motion stop accepted" if success else "motion stop failed")),
                 error_code=error_code,
-                state=self._motion_auth_constant("MOTION_AUTHORIZATION_STATE_MANUAL_START_REQUIRED", 4)
+                state=self._motion_auth_constant("MOTION_AUTHORIZATION_STATE_STANDING_NOT_AUTHORIZED", 3)
                 if current.get("standing", False)
                 else current.get("state", 0),
                 required_action=self._motion_auth_constant("MOTION_AUTHORIZATION_ACTION_STOP", 4),
                 standing=current.get("standing", False),
                 motion_authorized=False,
-                manual_start_required=bool(current.get("standing", False)),
+                manual_start_required=False,
                 motion_mode=current.get("motion_mode", 0),
                 gait_type=current.get("gait_type", 0),
                 runtime_mode=str(getattr(result, "runtime_mode", "") or current.get("runtime_mode", "")),
