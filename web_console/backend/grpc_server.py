@@ -788,7 +788,13 @@ class A2GrpcServices:
             body_height = getattr(raw_state, "body_height", None)
             standing: bool | None
             last_command_ok = sdk_code == 0 and last_error_code in {"", "ok"}
-            if last_command_ok and last_command in {"stand_down", "damp"}:
+            standing_motion_modes = {0, 1, 2, 3, 8}
+            nonstanding_motion_modes = {5, 7, 10}
+            if motion_mode in nonstanding_motion_modes:
+                standing = False
+            elif motion_mode in standing_motion_modes:
+                standing = True
+            elif last_command_ok and last_command in {"stand_down", "damp"}:
                 standing = False
             elif last_command_ok and last_command in {
                 "balance_stand",

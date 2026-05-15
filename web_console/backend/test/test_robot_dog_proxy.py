@@ -359,6 +359,7 @@ def test_authorize_motion_requires_stand_up_before_manual_start() -> None:
     node.control_state.last_command = "stand_down"
     node.snapshot.status.raw_state.position = [0.0, 0.0, 0.08]
     node.snapshot.status.raw_state.body_height = 0.08
+    node.snapshot.status.raw_state.motion_mode = 5
     service = _service(node)
 
     response = asyncio.run(service.AuthorizeMotion(types.SimpleNamespace(device_id="a2"), _Context()))
@@ -387,19 +388,35 @@ def test_motion_authorization_uses_successful_stand_command_before_unitree_body_
     assert response.error_code == "manual_start_required"
 
 
-def test_motion_authorization_does_not_treat_unitree_body_height_offset_zero_as_stand_down() -> None:
+def test_motion_authorization_uses_unitree_motion_mode_as_primary_posture_signal() -> None:
     node = _FakeNode()
     node.control_state.last_command = "none"
     node.snapshot.status.raw_state.position = [2.94, -5.78, 0.44]
     node.snapshot.status.raw_state.body_height = 0.0
+    node.snapshot.status.raw_state.motion_mode = 2
     service = _service(node)
 
     response = asyncio.run(service.GetMotionAuthorization(types.SimpleNamespace(device_id="a2"), _Context()))
 
     assert response.success is False
-    assert response.state == _RobotDogPb2.MOTION_AUTHORIZATION_STATE_UNKNOWN
-    assert response.required_action == _RobotDogPb2.MOTION_AUTHORIZATION_ACTION_NONE
-    assert response.error_code == "state_unavailable"
+    assert response.state == _RobotDogPb2.MOTION_AUTHORIZATION_STATE_MANUAL_START_REQUIRED
+    assert response.required_action == _RobotDogPb2.MOTION_AUTHORIZATION_ACTION_PRESS_REMOTE_START
+    assert response.error_code == "manual_start_required"
+
+
+def test_motion_authorization_reports_stand_down_from_unitree_lie_down_mode() -> None:
+    node = _FakeNode()
+    node.control_state.last_command = "none"
+    node.snapshot.status.raw_state.body_height = 0.0
+    node.snapshot.status.raw_state.motion_mode = 5
+    service = _service(node)
+
+    response = asyncio.run(service.GetMotionAuthorization(types.SimpleNamespace(device_id="a2"), _Context()))
+
+    assert response.success is False
+    assert response.state == _RobotDogPb2.MOTION_AUTHORIZATION_STATE_STAND_DOWN
+    assert response.required_action == _RobotDogPb2.MOTION_AUTHORIZATION_ACTION_STAND_UP
+    assert response.error_code == "stand_up_required"
 
 
 def test_release_motion_authorization_stops_motion_and_returns_stop_action() -> None:
