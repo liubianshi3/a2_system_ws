@@ -15,6 +15,7 @@ from tf2_ros import TransformBroadcaster
 from autoware_map_msgs.srv import GetDifferentialPointCloudMap
 from autoware_map_msgs.msg import PointCloudMapCellWithID, PointCloudMapCellMetaData
 from autoware_internal_debug_msgs.msg import Float32Stamped
+from .pose_math import compose_map_pose_from_odom, seeded_odom_tracking_status
 
 def normalize_quaternion(q: np.ndarray) -> np.ndarray:
     norm = float(np.linalg.norm(q))
@@ -160,9 +161,11 @@ class A2NdtAdapter(Node):
         self.declare_parameter('auto_activate_ndt', True)
         self.declare_parameter('ndt_trigger_service', '/trigger_node_srv')
         self.declare_parameter('ndt_trigger_retry_sec', 1.0)
+        self.declare_parameter('tracking_pose_publish_period_sec', 0.10)
         
         # State
         self.last_odom_to_base = None
+        self.last_odom_msg = None
         self.map_to_odom = np.eye(4)
         self.has_seed = False
         self.awaiting_first_ndt_fix = False
@@ -180,6 +183,7 @@ class A2NdtAdapter(Node):
         self.last_map_returned_points = 0
         self.last_cloud_stamp = None
         self.last_initial_guess_publish_time = None
+        self.last_tracking_pose_publish_time = None
         self.initial_guess_publish_count = 0
         self.last_initial_guess_reason = 'none'
         self.ndt_trigger_future = None
@@ -217,6 +221,7 @@ class A2NdtAdapter(Node):
         )
 
     def on_odom(self, msg: Odometry):
+        self.last_odom_msg = msg
         self.last_odom_to_base = pose_to_matrix(msg.pose.pose.position, msg.pose.pose.orientation)
         self.last_odom_stamp = Time.from_msg(msg.header.stamp)
         if not self._received_first_odom:
@@ -225,6 +230,8 @@ class A2NdtAdapter(Node):
                 f"Received first odom msg from {self.get_parameter('odom_topic').value}"
             )
         self.publish_map_to_odom_tf()
+        if self.has_seed:
+            self.publish_tracking_pose_from_odom(msg)
         if self.has_seed and self.awaiting_first_ndt_fix:
             self.publish_ndt_initial_guess_from_odom(msg)
 
@@ -297,6 +304,8 @@ class A2NdtAdapter(Node):
         self.awaiting_first_ndt_fix = True
         self.get_logger().info("Initial pose set, seeding NDT.")
         self.publish_map_to_odom_tf()
+        if self.last_odom_msg is not None:
+            self.publish_tracking_pose_from_odom(self.last_odom_msg, force=True)
 
         # Also relay to NDT's initial pose topic
         ndt_seed = copy.deepcopy(msg)
@@ -347,6 +356,34 @@ class A2NdtAdapter(Node):
         self.last_initial_guess_publish_time = now
         self.initial_guess_publish_count += 1
         self.last_initial_guess_reason = 'periodic_odom'
+
+    def publish_tracking_pose_from_odom(self, msg: Odometry, force: bool = False):
+        now = self.get_clock().now()
+        if not force and self.last_tracking_pose_publish_time is not None:
+            elapsed = (now - self.last_tracking_pose_publish_time).nanoseconds * 1e-9
+            period = float(self.get_parameter('tracking_pose_publish_period_sec').value)
+            if math.isfinite(period) and period > 0.0 and elapsed < period:
+                return
+
+        if self.last_odom_to_base is None:
+            return
+
+        map_to_base = compose_map_pose_from_odom(self.map_to_odom, self.last_odom_to_base)
+        pose = PoseWithCovarianceStamped()
+        pose.header.frame_id = self.get_parameter('map_frame').value
+        pose.header.stamp = msg.header.stamp
+        pose.pose.pose.position.x = float(map_to_base[0, 3])
+        pose.pose.pose.position.y = float(map_to_base[1, 3])
+        pose.pose.pose.position.z = float(map_to_base[2, 3])
+        qx, qy, qz, qw = matrix_to_quaternion(map_to_base[:3, :3])
+        pose.pose.pose.orientation.x = qx
+        pose.pose.pose.orientation.y = qy
+        pose.pose.pose.orientation.z = qz
+        pose.pose.pose.orientation.w = qw
+        pose.pose.covariance = msg.pose.covariance
+
+        self.pose_pub.publish(pose)
+        self.last_tracking_pose_publish_time = now
 
     def publish_map_to_odom_tf(self):
         if not self.has_seed or not bool(self.get_parameter('publish_tf').value):
@@ -557,13 +594,21 @@ class A2NdtAdapter(Node):
         elif not self.has_seed:
             self.publish_status(False, "waiting_seed", "send_initialpose")
             self.get_logger().info("NDT status: waiting for initial pose (/initialpose)", throttle_duration_sec=5.0)
-        elif self.last_score < 0:
-            self.publish_status(False, "waiting_first_score", "ndt_not_scored_yet")
-            self.get_logger().info("NDT status: waiting for first NDT score", throttle_duration_sec=5.0)
-        elif not self.score_is_fresh():
-            age = (self.get_clock().now() - self.last_score_stamp).nanoseconds * 1e-9 if self.last_score_stamp else -1.0
-            self.publish_status(False, "waiting_score", "no_recent_ndt_score")
-            self.get_logger().info(f"NDT status: score stale ({age:.1f}s), last_score={self.last_score:.3f}", throttle_duration_sec=5.0)
+        else:
+            tracking_ready, tracking_state, tracking_reason = seeded_odom_tracking_status(
+                has_seed=self.has_seed,
+                odom_fresh=self.odom_is_fresh(),
+                score=self.last_score,
+                score_threshold=float(self.get_parameter('score_threshold').value),
+                score_min_is_good=bool(self.get_parameter('score_min_is_good').value),
+                map_ready=bool(self.cached_map_points.size > 0 and not self.map_parse_error),
+            )
+            self.publish_status(tracking_ready, tracking_state, tracking_reason)
+            if not tracking_ready:
+                self.get_logger().info(
+                    f"NDT status: {tracking_state} ({tracking_reason}), last_score={self.last_score:.3f}",
+                    throttle_duration_sec=5.0,
+                )
 
     def publish_status(self, ready, state, reason):
         score = self.last_score if self.last_score is not None else -1.0
@@ -583,6 +628,8 @@ class A2NdtAdapter(Node):
             f"initial_guess_count={self.initial_guess_publish_count}",
             f"last_initial_guess_reason={self.last_initial_guess_reason}",
             f"ndt_activation_confirmed={str(bool(self.ndt_activation_confirmed)).lower()}",
+            f"odom_fresh={str(bool(self.odom_is_fresh())).lower()}",
+            f"score_fresh={str(bool(self.score_is_fresh())).lower()}",
             f"live_cloud_topic={self.get_parameter('live_cloud_topic').value}",
             f"odom_topic={self.get_parameter('odom_topic').value}",
         ]

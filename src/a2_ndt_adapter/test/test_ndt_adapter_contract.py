@@ -3,14 +3,16 @@ from pathlib import Path
 
 import numpy as np
 
-from a2_ndt_adapter.ndt_adapter_node import (
+from a2_ndt_adapter.pose_math import (
     choose_ndt_initial_stamp,
     clamp_map_radius,
+    compose_map_pose_from_odom,
     make_map_cell_id,
     matrix_to_quaternion,
     quaternion_to_matrix,
     score_is_acceptable,
     select_points_for_area,
+    seeded_odom_tracking_status,
     should_publish_periodic_guess,
 )
 
@@ -82,6 +84,47 @@ def test_periodic_initial_guess_publish_gate():
     assert should_publish_periodic_guess(0.11, 0.1)
     assert not should_publish_periodic_guess(0.05, 0.1)
     assert should_publish_periodic_guess(0.0, 0.0)
+
+
+def test_map_pose_from_odom_uses_current_map_to_odom_anchor():
+    odom_to_base = np.eye(4, dtype=np.float64)
+    odom_to_base[:3, 3] = [1.2, -0.5, 0.0]
+    map_to_odom = np.eye(4, dtype=np.float64)
+    map_to_odom[:3, 3] = [2.0, 3.0, 0.0]
+
+    map_to_base = compose_map_pose_from_odom(map_to_odom, odom_to_base)
+
+    assert np.allclose(map_to_base[:3, 3], [3.2, 2.5, 0.0])
+
+
+def test_seeded_odom_tracking_remains_ready_when_ndt_score_is_stale():
+    ready, state, reason = seeded_odom_tracking_status(
+        has_seed=True,
+        odom_fresh=True,
+        score=6.7,
+        score_threshold=2.3,
+        score_min_is_good=True,
+        map_ready=True,
+    )
+
+    assert ready is True
+    assert state == "tracking"
+    assert reason == "odom_tracking"
+
+
+def test_seeded_odom_tracking_requires_a_valid_prior_ndt_score():
+    ready, state, reason = seeded_odom_tracking_status(
+        has_seed=True,
+        odom_fresh=True,
+        score=-1.0,
+        score_threshold=2.3,
+        score_min_is_good=True,
+        map_ready=True,
+    )
+
+    assert ready is False
+    assert state == "waiting_first_score"
+    assert reason == "ndt_not_scored_yet"
 
 
 def test_ndt_adapter_logs_runtime_correction_limits():
