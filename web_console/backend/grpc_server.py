@@ -785,23 +785,12 @@ class A2GrpcServices:
                     "sdk_code": sdk_code,
                 }
 
-            position_z = None
-            position = getattr(raw_state, "position", None)
-            if isinstance(position, (list, tuple)) and len(position) >= 3:
-                try:
-                    position_z = float(position[2])
-                except Exception:
-                    position_z = None
-
             body_height = getattr(raw_state, "body_height", None)
             standing: bool | None
-            if isinstance(position_z, (int, float)) and math.isfinite(float(position_z)):
-                standing = float(position_z) >= 0.2
-            elif isinstance(body_height, (int, float)) and math.isfinite(float(body_height)):
-                standing = float(body_height) >= 0.2
-            elif last_command in {"stand_down", "damp"}:
+            last_command_ok = sdk_code == 0 and last_error_code in {"", "ok"}
+            if last_command_ok and last_command in {"stand_down", "damp"}:
                 standing = False
-            elif last_command in {
+            elif last_command_ok and last_command in {
                 "balance_stand",
                 "body_height",
                 "move",
@@ -812,6 +801,8 @@ class A2GrpcServices:
                 "switch_gait",
                 "walk",
             }:
+                standing = True
+            elif isinstance(body_height, (int, float)) and math.isfinite(float(body_height)) and float(body_height) > 0.2:
                 standing = True
             else:
                 standing = None
