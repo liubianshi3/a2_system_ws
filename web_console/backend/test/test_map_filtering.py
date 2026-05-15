@@ -95,3 +95,12 @@ def test_start_navigation_rejects_incompatible_legacy_2d_map(tmp_path):
         assert "3D 点云地图" in str(exc)
     else:
         raise AssertionError("legacy 2D map should be rejected for 3D-only navigation")
+
+
+def test_expected_navigation_nodes_respects_explicit_3d_flag(tmp_path):
+    controller = _build_controller(tmp_path)
+
+    nodes = controller._expected_nodes_for_mode("navigation", use_3d_navigation=True)
+
+    assert any(pattern == "planner_server" for _, _, pattern in nodes)
+    assert any(pattern == "bt_navigator" for _, _, pattern in nodes)

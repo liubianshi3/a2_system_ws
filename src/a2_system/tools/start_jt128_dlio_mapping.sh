@@ -276,6 +276,42 @@ if ! kill -0 "$PID" >/dev/null 2>&1; then
   die "JT128 DLIO launch exited early; see ${LOG_FILE}"
 fi
 
+OCTOMAP_PID=""
+OCTOMAP_LOG_FILE=""
+if [[ "$START_DLIO" == "true" ]]; then
+  OCTOMAP_LOG_FILE="${LOG_DIR}/octomap_mapping_$(date +%Y%m%d_%H%M%S).log"
+  log "Starting OctoMap mapping launch"
+  nohup bash -lc "
+    set -e
+    source /opt/ros/humble/setup.bash
+    if [ -f '${GRAPH_PID_WS}/install/setup.bash' ]; then source '${GRAPH_PID_WS}/install/setup.bash'; fi
+    source '${WORKSPACE}/install/setup.bash'
+    export A2_WORKSPACE='${WORKSPACE}'
+    ros2 launch a2_bringup octomap_mapping.launch.py \
+      use_sim_time:=false \
+      odom_topic:=/jt128/dlio/odom \
+      cloud_topic:=/jt128/front/points \
+      save_path:='${MAP_ROOT}/octomap_live.bt'
+  " >"$OCTOMAP_LOG_FILE" 2>&1 &
+  OCTOMAP_PID=$!
+
+  sleep 3
+  if ! kill -0 "$OCTOMAP_PID" >/dev/null 2>&1; then
+    tail -80 "$OCTOMAP_LOG_FILE" >&2 || true
+    die "OctoMap mapping launch exited early; see ${OCTOMAP_LOG_FILE}"
+  fi
+  log "Started OctoMap mapping pid=${OCTOMAP_PID}"
+  log "OctoMap log file: ${OCTOMAP_LOG_FILE}"
+else
+  warn "Skipping OctoMap mapping because DLIO is disabled"
+fi
+
+cat >> "$STATE_FILE" <<EOF
+octomap_pid: ${OCTOMAP_PID:-null}
+octomap_log_file: ${OCTOMAP_LOG_FILE:-null}
+octomap_save_path: ${MAP_ROOT}/octomap_live.bt
+EOF
+
 log "Started JT128 DLIO mapping pid=${PID}"
 log "Log file: ${LOG_FILE}"
 log "Verify:"
@@ -283,5 +319,6 @@ log "  ros2 topic hz /jt128/front/points"
 log "  ros2 topic hz /jt128/front/imu"
 log "  ros2 topic info /jt128/dlio/odom"
 log "  ros2 topic info /jt128/dlio/map_points"
+log "  ros2 topic info /octomap_binary"
 log "Save PCD:"
 log "  ros2 service call /map_manager/manage_map a2_interfaces/srv/ManageMap \"{command: save, map_id: jt128_test}\""

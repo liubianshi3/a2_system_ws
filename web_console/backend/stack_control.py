@@ -42,6 +42,7 @@ LOG_TAIL_LINE_LIMIT = 80
 LOG_HIGHLIGHT_LIMIT = 12
 LOG_TEXT_LIMIT = 1800
 NAV_LIFECYCLE_NODES = ("map_server", "amcl")
+THREE_D_NAVIGATION_REPRESENTATIONS = {"pointcloud_map_3d", "nav2_3d_projected_2d_costmap"}
 LOG_HIGHLIGHT_MARKERS = (
     "[error]",
     "traceback",
@@ -59,6 +60,8 @@ MAPPING_NODES: list[tuple[str, str, PatternSpec]] = [
     ("driver", "JT128 Hesai driver", ("jt128_hesai_driver", "hesai_ros_driver_node")),
     ("dlio_odom", "JT128 DLIO odom", ("jt128_dlio_odom", "dlio_odom_node")),
     ("dlio_map", "JT128 DLIO map", ("jt128_dlio_map", "dlio_map_node")),
+    ("octomap_gate", "OctoMap cloud gate", "octomap_mapping_node.py"),
+    ("octomap_server", "OctoMap server", "octomap_server_node"),
     ("map_manager", "map_manager", "map_manager_node"),
 ]
 
@@ -83,10 +86,16 @@ NAVIGATION_NODES_3D: list[tuple[str, str, PatternSpec]] = [
     ("sdk", "a2_sdk_bridge", "a2_sdk_bridge_node"),
     ("control", "a2_control_bridge", "a2_control_bridge_node"),
     ("map_loader", "3D pointcloud map loader", "pointcloud_map_loader"),
-    ("relocalizer", "3D PCD relocalizer", "pcd_relocalizer_3d"),
+    ("ndt_scan_matcher", "Autoware NDT scan matcher", ("ndt_scan_matcher", "autoware_ndt_scan_matcher_node")),
+    ("ndt_adapter", "A2 NDT adapter", "ndt_adapter"),
     ("localization", "3D localization gate", "localization_gate"),
     ("goal_bridge", "3D goal bridge", "goal_bridge"),
-    ("goal_controller", "3D pose goal controller", "pose_goal_controller_3d"),
+    ("map_server", "Nav2 3D map server", "map_server"),
+    ("planner", "SmacPlanner2D planner server", "planner_server"),
+    ("controller", "DWB local controller server", "controller_server"),
+    ("bt_navigator", "Nav2 3D BT navigator", "bt_navigator"),
+    ("velocity", "Nav2 3D velocity smoother", "velocity_smoother"),
+    ("lifecycle", "Nav2 3D lifecycle manager", "lifecycle_manager"),
     ("map_manager", "3D map manager", "map_manager_node"),
 ]
 
@@ -112,6 +121,9 @@ STACK_CLEANUP_PATTERNS = [
     "jt128_dlio_map",
     "dlio_odom_node",
     "dlio_map_node",
+    "octomap_mapping_node.py",
+    "octomap_server_node",
+    "octomap_saver_node",
     "pointcloud_to_laserscan",
     "slam_toolbox",
     "native_map_relay",
@@ -369,25 +381,28 @@ class StackController:
             self.stop()
 
     def mapping_source_profile(self) -> str:
-        slam_cfg = self._read_yaml(self.a2_system_config_dir / "slam.yaml")
+        slam_cfg = self._read_slam_config()
         params = slam_cfg.get("slam_manager", {}).get("ros__parameters", {}) or {}
         profile = str(params.get("mapping_stack_profile", "") or "").strip()
         return profile or "slam_toolbox"
 
     def navigation_representation(self) -> str:
-        slam_cfg = self._read_yaml(self.a2_system_config_dir / "slam.yaml")
+        slam_cfg = self._read_slam_config()
         params = slam_cfg.get("slam_manager", {}).get("ros__parameters", {}) or {}
         return str(params.get("navigation_representation", "") or "").strip()
 
+    def _navigation_requires_3d_map(self) -> bool:
+        return self.navigation_representation() in THREE_D_NAVIGATION_REPRESENTATIONS
+
     def _is_3d_navigation_map(self, map_info: SavedMapInfo | None = None) -> bool:
-        if self.navigation_representation() == "pointcloud_map_3d":
+        if self._navigation_requires_3d_map():
             return bool(map_info and map_info.navigation_compatible)
         if map_info is None:
             return False
         return bool(map_info.has_pointcloud_3d or map_info.representation == "pointcloud_map_3d")
 
     def _navigation_compatibility_for_map(self, map_info: SavedMapInfo) -> tuple[bool, str | None]:
-        if self.navigation_representation() != "pointcloud_map_3d":
+        if not self._navigation_requires_3d_map():
             return True, None
         if map_info.has_pointcloud_3d or map_info.representation == "pointcloud_map_3d":
             return True, None
@@ -410,7 +425,7 @@ class StackController:
                 if map_info is not None:
                     use_3d_navigation = self._is_3d_navigation_map(map_info)
                 else:
-                    use_3d_navigation = self.navigation_representation() == "pointcloud_map_3d"
+                    use_3d_navigation = self._navigation_requires_3d_map()
             if use_3d_navigation:
                 return NAVIGATION_NODES_3D
             return NAVIGATION_NODES
@@ -1259,6 +1274,14 @@ class StackController:
             return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         except Exception:
             return {}
+
+    def _read_slam_config(self) -> dict[str, Any]:
+        if self.start_script.name == "start_jt128_3d_stack.sh":
+            slam_3d_path = self.a2_system_config_dir / "slam_3d.yaml"
+            slam_3d = self._read_yaml(slam_3d_path)
+            if slam_3d:
+                return slam_3d
+        return self._read_yaml(self.a2_system_config_dir / "slam.yaml")
 
     def _resolve_a2_system_config_dir(self) -> Path:
         candidates = [

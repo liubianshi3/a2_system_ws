@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import yaml
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from backend.config import load_config
@@ -18,7 +20,12 @@ from backend.models import (
     VirtualObstacleListing,
     VirtualObstacleZone,
 )
-from backend.stack_control import MAPPING_NODES, NAVIGATION_NODES, STACK_CLEANUP_PATTERNS
+from backend.stack_control import (
+    MAPPING_NODES,
+    NAVIGATION_NODES,
+    NAVIGATION_NODES_3D,
+    STACK_CLEANUP_PATTERNS,
+)
 
 
 def test_dashboard_snapshot_contains_camera_contract():
@@ -64,6 +71,22 @@ def test_docker_config_uses_raw_camera_when_compressed_topic_is_absent():
     assert config.camera.prefer_compressed is False
     assert config.ros.camera_image_topic == "/camera/image_raw"
     assert config.navigation.backend == "nav2"
+
+
+def test_zbe_docker_config_uses_jt128_3d_stack_and_keeps_manual_control():
+    config = load_config(Path(__file__).resolve().parents[1] / "config.docker.zbe.yaml")
+
+    assert config.stack.start_script.endswith("start_jt128_3d_stack.sh")
+    assert config.stack.stop_script.endswith("stop_jt128_stack.sh")
+    assert config.stack.command_timeout_sec >= 60.0
+    assert config.ros.localization_pose_topic == "/a2/relocalization/pose"
+    assert config.ros.pointcloud_topic == "/jt128/front/points"
+    assert config.ros.pointcloud_fallback_topic == "/a2/map/pointcloud_3d"
+    assert config.ros.odom_topic == "/jt128/dlio/odom"
+    assert config.navigation.backend == "nav2"
+    assert config.navigation.goal_topic == "/a2/nav3/goal_pose"
+    assert config.manual_control.enabled is True
+    assert config.manual_control.cmd_topic == "/cmd_vel_safe"
 
 
 def test_sim_config_uses_direct_cmd_vel_navigation_for_sim():
@@ -199,6 +222,30 @@ def test_navigation_contract_uses_nav2_by_default():
     assert "pose_goal_controller_3d" in STACK_CLEANUP_PATTERNS
 
 
+def test_3d_navigation_contract_uses_nav2_3d_not_legacy_pose_controller():
+    labels = {label for _, label, _ in NAVIGATION_NODES_3D}
+    patterns = {pattern for _, _, pattern in NAVIGATION_NODES_3D}
+
+    assert "SmacPlanner2D planner server" in labels
+    assert "DWB local controller server" in labels
+    assert "Nav2 3D BT navigator" in labels
+    assert "3D pose goal controller" not in labels
+    assert "planner_server" in patterns
+    assert "controller_server" in patterns
+    assert "bt_navigator" in patterns
+    assert "pose_goal_controller_3d" not in patterns
+
+
+def test_3d_navigation_algorithm_contract_is_smac2d_plus_dwb():
+    root = Path(__file__).resolve().parents[3]
+    nav2_3d = yaml.safe_load((root / "src/a2_system/config/nav2_3d.yaml").read_text(encoding="utf-8"))
+    planner = nav2_3d["planner_server"]["ros__parameters"]["GridBased"]
+    controller = nav2_3d["controller_server"]["ros__parameters"]["FollowPath"]
+
+    assert planner["plugin"] == "nav2_smac_planner/SmacPlanner2D"
+    assert controller["plugin"] == "dwb_core::DWBLocalPlanner"
+
+
 def test_mapping_contract_accepts_slam_toolbox_and_native_fallbacks():
     mapping_patterns = {pattern for _, _, pattern in MAPPING_NODES}
 
@@ -206,6 +253,10 @@ def test_mapping_contract_accepts_slam_toolbox_and_native_fallbacks():
     assert "native_map_relay" in STACK_CLEANUP_PATTERNS
     assert "pointcloud_accumulator" in STACK_CLEANUP_PATTERNS
     assert ("jt128_dlio_map", "dlio_map_node") in mapping_patterns
+    assert "octomap_mapping_node.py" in mapping_patterns
+    assert "octomap_server_node" in mapping_patterns
+    assert "octomap_mapping_node.py" in STACK_CLEANUP_PATTERNS
+    assert "octomap_server_node" in STACK_CLEANUP_PATTERNS
 
 
 def test_map_media_listing_contract_supports_image_pointcloud_linking():
