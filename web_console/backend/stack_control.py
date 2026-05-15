@@ -1103,7 +1103,7 @@ class StackController:
             selected_map_id=runtime_state.get("selected_map_id"),
             selected_map_yaml=runtime_state.get("selected_map_yaml"),
             nodes=nodes,
-            maps=self.list_maps(),
+            maps=self.list_maps(include_incompatible=True),
             message=runtime_state.get("message"),
         )
 

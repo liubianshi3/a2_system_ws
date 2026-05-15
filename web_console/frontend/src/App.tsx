@@ -500,6 +500,10 @@ export default function App() {
   }, [websocketError]);
 
   const selectedMap = maps.find((map) => map.map_id === selectedMapId) ?? null;
+  const selectedMapCompatibilityReason =
+    selectedMap?.navigation_compatible === false
+      ? selectedMap.navigation_compatibility_reason || "所选地图不兼容当前导航链"
+      : null;
   const has3DViewerData = snapshot.pointcloud.loaded || Boolean(selectedMap?.has_pointcloud_3d);
   const directNavigationBackend = snapshot.navigation.backend === "cmd_vel_direct";
   const navigationUses3D = snapshot.navigation.backend === "pose_topic_3d" || has3DViewerData;
@@ -542,6 +546,8 @@ export default function App() {
       ? "栈正在启动或停止，暂时不能切换模式"
       : !selectedMapId
         ? "请先选择一张导航地图"
+        : selectedMapCompatibilityReason
+          ? selectedMapCompatibilityReason
         : stack?.mode === "navigation"
           ? "当前已经在导航模式"
           : "会停止当前栈并加载所选地图进入导航";
@@ -641,6 +647,10 @@ export default function App() {
   const handleStartNavigation = () => {
     if (!selectedMapId) {
       setLastError("请先选择地图");
+      return;
+    }
+    if (selectedMapCompatibilityReason) {
+      setLastError(selectedMapCompatibilityReason);
       return;
     }
     if (!window.confirm(`启动导航模式会停止当前栈并加载地图 ${selectedMapId}。确认继续？`)) {

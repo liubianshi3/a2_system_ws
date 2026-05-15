@@ -380,7 +380,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
 
     @app.get("/api/maps")
     async def list_maps():
-        return {"maps": jsonable_encoder(stack_controller.list_maps())}
+        return {"maps": jsonable_encoder(stack_controller.list_maps(include_incompatible=True))}
 
     @app.get("/api/maps/{map_id}/media", response_model=MapMediaListing)
     async def list_map_media(map_id: str):
@@ -602,7 +602,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
         return {
             "ok": True,
             "map": jsonable_encoder(saved),
-            "maps": jsonable_encoder(stack_controller.list_maps()),
+            "maps": jsonable_encoder(stack_controller.list_maps(include_incompatible=True)),
             "native_slam_save": jsonable_encoder(native_save) if native_save is not None else None,
         }
 

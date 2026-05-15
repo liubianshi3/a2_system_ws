@@ -146,6 +146,7 @@ export function MapManagementSection({
   const isMapping = stack?.mode === "mapping";
   const isNavigation = stack?.mode === "navigation";
   const selectedMap = maps.find((map) => map.map_id === selectedMapId) ?? null;
+  const selectedMapNavigationBlocked = selectedMap?.navigation_compatible === false;
   const pointcloudArtifact =
     selectedMap?.artifacts.find((artifact) => artifact.kind === "native_pointcloud_map_3d") ??
     selectedMap?.artifacts.find((artifact) => artifact.kind === "pointcloud_snapshot_3d") ??
@@ -166,13 +167,13 @@ export function MapManagementSection({
         <option value="">选择地图</option>
         {maps.map((map) => (
           <option key={map.map_id} value={map.map_id}>
-            {map.map_id}
+            {map.navigation_compatible ? map.map_id : `${map.map_id}（不可用于当前导航）`}
           </option>
         ))}
       </select>
       <button
         className="primary-button full-width-button"
-        disabled={stackBusy || !selectedMapId || isNavigation}
+        disabled={stackBusy || !selectedMapId || isNavigation || selectedMapNavigationBlocked}
         onClick={onStartNavigation}
       >
         启动导航模式
@@ -180,6 +181,10 @@ export function MapManagementSection({
       <p className="panel-message">{formatNullable(startNavigationReason, "当前地图可用于导航启动")}</p>
       {selectedMap ? (
         <div className="map-asset-card">
+          <StatusMini
+            label="navigation"
+            value={selectedMap.navigation_compatible ? "compatible" : "incompatible"}
+          />
           <StatusMini label="representation" value={formatNullable(selectedMap.representation)} />
           <StatusMini label="2D source" value={formatNullable(selectedMap.source_topic)} />
           <StatusMini
