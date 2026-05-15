@@ -281,14 +281,14 @@ if ! kill -0 "$PID" >/dev/null 2>&1; then
   tail -80 "$LOG_FILE" >&2 || true
   die "JT128 DLIO launch exited early; see ${LOG_FILE}"
 fi
-if grep -Eiq "bind failed|open udp source failed|\\[FATAL\\]|SocketSource::Open" "$LOG_FILE"; then
+if grep -Eiq "bind failed|open udp source failed|\\[FATAL\\]" "$LOG_FILE"; then
   tail -80 "$LOG_FILE" >&2 || true
   die "JT128 Hesai driver failed to bind UDP source; see ${LOG_FILE}"
 fi
 
 log "Waiting for first JT128 pointcloud"
 if ! timeout 12 ros2 topic echo --once --qos-reliability best_effort /jt128/front/points >/dev/null 2>&1; then
-  grep -Eiq "bind failed|open udp source failed|\\[FATAL\\]|SocketSource::Open" "$LOG_FILE" && tail -80 "$LOG_FILE" >&2 || true
+  grep -Eiq "bind failed|open udp source failed|\\[FATAL\\]" "$LOG_FILE" && tail -80 "$LOG_FILE" >&2 || true
   die "JT128 pointcloud /jt128/front/points did not publish within 12s; check sensor packets and UDP port 2368"
 fi
 

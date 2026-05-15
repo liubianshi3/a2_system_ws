@@ -263,6 +263,14 @@ def test_jt128_hesai_config_matches_sdk2_schema():
     assert ros["ros_send_point_cloud_topic"] == "/jt128/front/points"
 
 
+def test_jt128_startup_does_not_treat_socket_open_success_as_failure():
+    root = Path(__file__).resolve().parents[3]
+    script = (root / "src/a2_system/tools/start_jt128_dlio_mapping.sh").read_text(encoding="utf-8")
+
+    assert "SocketSource::Open" not in script
+    assert "bind failed|open udp source failed|\\\\[FATAL\\\\]" in script
+
+
 def test_mapping_contract_accepts_slam_toolbox_and_native_fallbacks():
     mapping_patterns = {pattern for _, _, pattern in MAPPING_NODES}
 
