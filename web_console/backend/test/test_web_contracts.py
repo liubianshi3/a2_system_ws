@@ -246,6 +246,23 @@ def test_3d_navigation_algorithm_contract_is_smac2d_plus_dwb():
     assert controller["plugin"] == "dwb_core::DWBLocalPlanner"
 
 
+def test_jt128_hesai_config_matches_sdk2_schema():
+    root = Path(__file__).resolve().parents[3]
+    config = yaml.safe_load(
+        (root / "src/a2_system/config/jt128_front_hesai.yaml").read_text(encoding="utf-8")
+    )
+    driver = config["lidar"][0]["driver"]
+    udp = driver["lidar_udp_type"]
+    ros = config["lidar"][0]["ros"]
+
+    assert "device_ip_address" not in driver
+    assert udp["device_ip_address"] == "192.168.124.20"
+    assert udp["udp_port"] == 2368
+    assert udp["use_ptc_connected"] is True
+    assert udp["host_ip_address"] == ""
+    assert ros["ros_send_point_cloud_topic"] == "/jt128/front/points"
+
+
 def test_mapping_contract_accepts_slam_toolbox_and_native_fallbacks():
     mapping_patterns = {pattern for _, _, pattern in MAPPING_NODES}
 
