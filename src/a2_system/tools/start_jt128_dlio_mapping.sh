@@ -227,6 +227,7 @@ start_web() {
 require_cmd ip
 require_cmd ping
 require_cmd pkill
+require_cmd ss
 
 mkdir -p "$LOG_DIR" "$MAP_ROOT"
 source_ros
@@ -235,6 +236,11 @@ run_privileged sysctl -w net.core.rmem_max=2147483647 >/dev/null 2>&1 || true
 stop_interference
 check_network
 check_packages
+if ss -H -lun | grep -Eq '(^|[[:space:]])[^[:space:]]*:2368[[:space:]]'; then
+  warn "UDP port 2368 is already bound; another JT128/Hesai driver may be running"
+  ss -lunp | grep -E '(^|[[:space:]])[^[:space:]]*:2368[[:space:]]' >&2 || true
+  die "JT128 UDP port 2368 is occupied; stop the other mapping/navigation stack before starting this one"
+fi
 start_web
 
 START_DLIO=true
@@ -274,6 +280,16 @@ sleep 3
 if ! kill -0 "$PID" >/dev/null 2>&1; then
   tail -80 "$LOG_FILE" >&2 || true
   die "JT128 DLIO launch exited early; see ${LOG_FILE}"
+fi
+if grep -Eiq "bind failed|open udp source failed|\\[FATAL\\]|SocketSource::Open" "$LOG_FILE"; then
+  tail -80 "$LOG_FILE" >&2 || true
+  die "JT128 Hesai driver failed to bind UDP source; see ${LOG_FILE}"
+fi
+
+log "Waiting for first JT128 pointcloud"
+if ! timeout 12 ros2 topic echo --once --qos-reliability best_effort /jt128/front/points >/dev/null 2>&1; then
+  grep -Eiq "bind failed|open udp source failed|\\[FATAL\\]|SocketSource::Open" "$LOG_FILE" && tail -80 "$LOG_FILE" >&2 || true
+  die "JT128 pointcloud /jt128/front/points did not publish within 12s; check sensor packets and UDP port 2368"
 fi
 
 OCTOMAP_PID=""
