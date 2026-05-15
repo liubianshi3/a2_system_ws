@@ -21,6 +21,8 @@ a2_control_bridge:
     allow_motion_without_map: false
     allow_motion_without_localization: false
     gait_control_enabled: false
+    motion_command_service: /a2/control/command
+    control_state_topic: /a2/control/state
     gait_type_topic: /a2/control/gait_type
     speed_level_topic: /a2/control/speed_level
     body_height_topic: /a2/control/body_height

@@ -1,6 +1,10 @@
 build/
 install/
 /log/
+.DS_Store
+._*
+**/.DS_Store
+**/._*
 
 runtime/logs/
 runtime/outdoor_demo_logs/

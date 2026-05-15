@@ -1,0 +1,56 @@
+name: device-navigation-zbe
+
+services:
+  a2-system-ws:
+    image: device-navigation-a2:zbe-amd64
+    platform: linux/amd64
+    init: true
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        A2_REQUIRE_UNITREE_SDK: "ON"
+    network_mode: host
+    privileged: true
+    restart: unless-stopped
+    environment:
+      A2_WORKSPACE: /opt/a2_system_ws
+      CONFIG_PATH: /opt/a2_system_ws/web_console/backend/config.docker.zbe.yaml
+      ROS_DOMAIN_ID: "88"
+      RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
+      # Default to Web-only. Operators choose mapping/navigation from the Web UI.
+      A2_DOCKER_START_MODE: standby
+      A2_NAV_MAP_ID: ""
+      A2_NETWORK_INTERFACE: eth0
+      A2_JT128_INTERFACE: net1
+      A2_SDK_INTERFACE: eth0
+      A2_CONTROL_INTERFACE: eth0
+      A2_ENABLE_NAV2_3D: "true"
+      A2_REQUIRE_NAV2_MAP: "true"
+      A2_CONTROL_LINEAR_X_SIGN: "1.0"
+      A2_CONTROL_LINEAR_Y_SIGN: "1.0"
+      A2_CONTROL_YAW_SIGN: "1.0"
+      # Keep the platform gRPC API usable in standby mode without auto-starting
+      # the full mapping/navigation stack.
+      A2_CONTROL_BRIDGE_AUTOSTART: "true"
+      A2_CONTROL_BRIDGE_LD_PRELOAD: /opt/unitree_robotics/lib/x86_64/libddsc.so.0
+      A2_CONTROL_CMD_TOPIC: /cmd_vel_safe
+      A2_CONTROL_ALLOW_WITHOUT_MAP: "true"
+      A2_CONTROL_ALLOW_WITHOUT_LOCALIZATION: "true"
+      A2_CONTROL_MAX_LINEAR_X: "0.35"
+      A2_CONTROL_MAX_LINEAR_Y: "0.18"
+      A2_CONTROL_MAX_YAW_RATE: "0.45"
+      A2_CONTROL_CMD_TIMEOUT_SEC: "0.30"
+      # Physical motion stays off unless both are explicitly enabled.
+      A2_ENABLE_MOTION: "false"
+      A2_LIVE_MOTION: "false"
+      A2_STACK_REQUIRED: "false"
+    volumes:
+      - /home/unitree/ws/zbe/runtime/maps:/opt/a2_system_ws/runtime/maps
+      - /home/unitree/ws/zbe/runtime/logs:/opt/a2_system_ws/runtime/logs
+      - /home/unitree/ws/zbe/runtime/routes:/opt/a2_system_ws/runtime/routes
+      - /home/unitree/ws/zbe/runtime/reports:/opt/a2_system_ws/runtime/reports
+      - /home/unitree/ws/zbe/runtime/test_records:/opt/a2_system_ws/runtime/test_records
+      # DLIO is currently provided by the existing A2 host workspace. Read-only mount avoids modifying it.
+      - /home/unitree/a2_system_ws/install/direct_lidar_inertial_odometry:/opt/a2_system_ws/install/direct_lidar_inertial_odometry:ro
+      - /home/unitree/a2_system_ws/build/direct_lidar_inertial_odometry:/home/unitree/a2_system_ws/build/direct_lidar_inertial_odometry:ro

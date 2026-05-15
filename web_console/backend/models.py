@@ -14,6 +14,24 @@ class TextStatus(BaseModel):
     fields: dict[str, str] = Field(default_factory=dict)
 
 
+class ControlStateSnapshot(BaseModel):
+    stamp: str | None = None
+    runtime_mode: str = ""
+    state: str = ""
+    ready: bool = False
+    reason: str = ""
+    interface_name: str = ""
+    gait_control_enabled: bool = False
+    gait_type: int = 0
+    speed_level: int = 0
+    body_height: float = 0.0
+    auto_recovery: bool = False
+    last_command: str = ""
+    last_sdk_code: int = 0
+    last_error_code: str = ""
+    last_error_reason: str = ""
+
+
 class Pose2D(BaseModel):
     x: float = 0.0
     y: float = 0.0
@@ -223,6 +241,15 @@ class GaitControlResponse(BaseModel):
     message: str
 
 
+class MotionCommandResult(BaseModel):
+    success: bool
+    message: str = ""
+    sdk_code: int = 0
+    error_code: str = ""
+    runtime_mode: str = ""
+    state: str = ""
+
+
 class CameraFrame(BaseModel):
     available: bool = False
     topic: str | None = None
@@ -365,6 +392,7 @@ class DashboardSnapshot(BaseModel):
     pointcloud: PointCloudSnapshot = Field(default_factory=PointCloudSnapshot)
     pose: RobotPose = Field(default_factory=RobotPose)
     status: RobotStatus = Field(default_factory=RobotStatus)
+    control_state: ControlStateSnapshot = Field(default_factory=ControlStateSnapshot)
     navigation: NavigationTaskState = Field(default_factory=NavigationTaskState)
     camera: CameraFrame = Field(default_factory=CameraFrame)
     health: SystemHealth = Field(default_factory=SystemHealth)

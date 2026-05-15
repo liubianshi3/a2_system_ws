@@ -7,6 +7,7 @@ import json
 import math
 import struct
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -33,15 +34,29 @@ except ImportError:  # pragma: no cover - runtime environment fallback
     RobotState = None
 
 try:
+    from a2_interfaces.msg import ControlState
+except ImportError:  # pragma: no cover - runtime environment fallback
+    ControlState = None
+
+try:
     from a2_interfaces.msg import LightCommand
 except ImportError:  # pragma: no cover - runtime environment fallback
     LightCommand = None
 
 try:
-    from a2_interfaces.srv import ManageMap, NavCommand
+    from a2_interfaces.srv import ManageMap
 except ImportError:  # pragma: no cover - runtime environment fallback
     ManageMap = None
+
+try:
+    from a2_interfaces.srv import NavCommand
+except ImportError:  # pragma: no cover - runtime environment fallback
     NavCommand = None
+
+try:
+    from a2_interfaces.srv import MotionCommand
+except ImportError:  # pragma: no cover - runtime environment fallback
+    MotionCommand = None
 
 try:
     from nav2_msgs.action import NavigateToPose
@@ -69,6 +84,7 @@ from .config import AppConfig
 from .direct_navigation import compute_direct_velocity_command
 from .models import (
     BatterySnapshot,
+    ControlStateSnapshot,
     RecoveryStatus,
     DashboardSnapshot,
     CameraFrame,
@@ -77,6 +93,7 @@ from .models import (
     GaitControlResponse,
     ManualVelocityCommand,
     ManualVelocityResponse,
+    MotionCommandResult,
     MapSnapshot,
     PointCloudSnapshot,
     NavigationGoal,
@@ -219,6 +236,7 @@ class RosBridgeNode(Node):
         self.navigation = NavigationTaskState(updated_at=now_iso())
         self.camera = CameraFrame()
         self.battery = BatterySnapshot()
+        self.control_state = ControlStateSnapshot()
         self.recovery_status = RecoveryStatus()
         self.health = SystemHealth(ros_connected=True)
         self._last_tf_frame: str | None = None
@@ -234,6 +252,7 @@ class RosBridgeNode(Node):
         self._native_slam_responses: dict[int, dict[str, Any]] = {}
         self.manage_map_client = None
         self.task_command_client = None
+        self.motion_command_client = None
 
         self._setup_subscriptions()
         if ManageMap is not None:
@@ -251,6 +270,14 @@ class RosBridgeNode(Node):
         else:
             self.get_logger().warning(
                 "a2_interfaces.srv.NavCommand is unavailable. Task manager bridge will be disabled."
+            )
+        if MotionCommand is not None:
+            self.motion_command_client = self.create_client(
+                MotionCommand, self.config.ros.motion_command_service
+            )
+        else:
+            self.get_logger().warning(
+                "a2_interfaces.srv.MotionCommand is unavailable. A2 motion command bridge will be disabled."
             )
         self.initial_pose_publisher = self.create_publisher(
             PoseWithCovarianceStamped,
@@ -370,6 +397,12 @@ class RosBridgeNode(Node):
         self.create_subscription(String, ros.pose_goal_status_topic, self._on_pose_goal_status, 10)
         self.create_subscription(String, ros.sdk_status_topic, self._on_sdk_status, 10)
         self.create_subscription(String, ros.control_status_topic, self._on_control_status, 10)
+        if ControlState is not None:
+            self.create_subscription(ControlState, ros.control_state_topic, self._on_control_state, 10)
+        else:
+            self.get_logger().warning(
+                "a2_interfaces.msg.ControlState is unavailable. /a2/control/state will be skipped."
+            )
         if RobotState is not None:
             self.create_subscription(RobotState, ros.raw_state_topic, self._on_raw_state, 10)
         else:
@@ -584,6 +617,44 @@ class RosBridgeNode(Node):
         if not response.success:
             raise RosBridgeError(response.message or f"task_manager {command} 失败")
         return response
+
+    def call_motion_command(
+        self,
+        command: str,
+        int_value: int = 0,
+        float_value: float = 0.0,
+        bool_value: bool = False,
+    ) -> MotionCommandResult:
+        if self.motion_command_client is None or MotionCommand is None:
+            raise RosBridgeError("a2 motion command service client 不可用")
+        if not self.motion_command_client.wait_for_service(timeout_sec=2.0):
+            raise RosBridgeError("a2 motion command service 不可用")
+
+        request = MotionCommand.Request()
+        request.command = str(command)
+        request.int_value = int(int_value)
+        request.float_value = float(float_value)
+        request.bool_value = bool(bool_value)
+
+        future = self.motion_command_client.call_async(request)
+        done = threading.Event()
+        future.add_done_callback(lambda _: done.set())
+        if not done.wait(timeout=4.0):
+            raise RosBridgeError(f"a2 motion command {command} 超时")
+        try:
+            response = future.result()
+        except Exception as exc:
+            raise RosBridgeError(f"a2 motion command {command} 调用失败: {exc}") from exc
+        if response is None:
+            raise RosBridgeError(f"a2 motion command {command} 未返回结果")
+        return MotionCommandResult(
+            success=bool(response.success),
+            message=str(response.message or ""),
+            sdk_code=int(getattr(response, "sdk_code", 0)),
+            error_code=str(getattr(response, "error_code", "")),
+            runtime_mode=str(getattr(response, "runtime_mode", "")),
+            state=str(getattr(response, "state", "")),
+        )
 
     def _task_route_status_from_text_status(self) -> TaskRouteStatus:
         with self._lock:
@@ -961,6 +1032,33 @@ class RosBridgeNode(Node):
             self.status.control_status = self._status_from_string(msg.data)
         self._publish("status", dump_model(self.status))
 
+    def _on_control_state(self, msg: ControlState) -> None:
+        stamp = now_iso()
+        msg_stamp = getattr(msg, "stamp", None)
+        sec = int(getattr(msg_stamp, "sec", 0) or 0)
+        nanosec = int(getattr(msg_stamp, "nanosec", 0) or 0)
+        if sec > 0:
+            stamp = datetime.fromtimestamp(sec + nanosec / 1_000_000_000.0, timezone.utc).isoformat()
+        with self._lock:
+            self.control_state = ControlStateSnapshot(
+                stamp=stamp,
+                runtime_mode=str(getattr(msg, "runtime_mode", "")),
+                state=str(getattr(msg, "state", "")),
+                ready=bool(getattr(msg, "ready", False)),
+                reason=str(getattr(msg, "reason", "")),
+                interface_name=str(getattr(msg, "interface_name", "")),
+                gait_control_enabled=bool(getattr(msg, "gait_control_enabled", False)),
+                gait_type=int(getattr(msg, "gait_type", 0)),
+                speed_level=int(getattr(msg, "speed_level", 0)),
+                body_height=float(getattr(msg, "body_height", 0.0)),
+                auto_recovery=bool(getattr(msg, "auto_recovery", False)),
+                last_command=str(getattr(msg, "last_command", "")),
+                last_sdk_code=int(getattr(msg, "last_sdk_code", 0)),
+                last_error_code=str(getattr(msg, "last_error_code", "")),
+                last_error_reason=str(getattr(msg, "last_error_reason", "")),
+            )
+        self._publish("control_state", dump_model(self.control_state))
+
     def _on_raw_state(self, msg: RobotState) -> None:
         raw_state = RawStateSummary(
             source_mode=msg.source_mode,
@@ -1208,6 +1306,7 @@ class RosBridgeNode(Node):
                 pointcloud=deep_copy_model(self.pointcloud_snapshot),
                 pose=pose,
                 status=status,
+                control_state=deep_copy_model(self.control_state),
                 navigation=navigation,
                 camera=deep_copy_model(self.camera),
                 health=health,

@@ -2,12 +2,15 @@
 
 #include <chrono>
 #include <cmath>
+#include <future>
 #include <memory>
 #include <regex>
 #include <string>
 #include <thread>
 
 #include "a2_control_bridge/a2_control_bridge_node.hpp"
+#include "a2_interfaces/msg/control_state.hpp"
+#include "a2_interfaces/srv/motion_command.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "geometry_msgs/msg/twist_stamped.hpp"
 #include "std_msgs/msg/bool.hpp"
@@ -44,6 +47,7 @@ protected:
   {
     limited_sub_.reset();
     status_sub_.reset();
+    control_state_sub_.reset();
     node_.reset();
   }
 
@@ -124,6 +128,35 @@ protected:
     spin(2);
   }
 
+  a2_interfaces::srv::MotionCommand::Response::SharedPtr call_motion_command(
+    const std::string & command,
+    int int_value = 0,
+    float float_value = 0.0F,
+    bool bool_value = false)
+  {
+    auto client = node_->create_client<a2_interfaces::srv::MotionCommand>("/a2/control/command");
+    if (!client->wait_for_service(std::chrono::seconds(1))) {
+      ADD_FAILURE() << "motion command service is not available";
+      return {};
+    }
+
+    auto request = std::make_shared<a2_interfaces::srv::MotionCommand::Request>();
+    request->command = command;
+    request->int_value = int_value;
+    request->float_value = float_value;
+    request->bool_value = bool_value;
+
+    auto future = client->async_send_request(request);
+    for (int i = 0; i < 50 && future.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready; ++i) {
+      spin(1);
+    }
+    if (future.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+      ADD_FAILURE() << "motion command service did not respond";
+      return {};
+    }
+    return future.get();
+  }
+
   void recreate_with_parameters(const std::vector<rclcpp::Parameter> & parameters)
   {
     limited_sub_.reset();
@@ -152,6 +185,12 @@ protected:
         last_status_ = msg->data;
         have_status_ = true;
       });
+    control_state_sub_ = node_->create_subscription<a2_interfaces::msg::ControlState>(
+      "/a2/control/state", 10,
+      [this](const a2_interfaces::msg::ControlState::SharedPtr msg) {
+        last_control_state_ = *msg;
+        have_control_state_ = true;
+      });
   }
 
   /// Subscribe to /a2/command_limited and return the last received twist
@@ -176,13 +215,26 @@ protected:
     return last_status_;
   }
 
+  a2_interfaces::msg::ControlState get_control_state()
+  {
+    have_control_state_ = false;
+    for (int i = 0; i < 20 && !have_control_state_; ++i) {
+      spin(1);
+    }
+    EXPECT_TRUE(have_control_state_);
+    return last_control_state_;
+  }
+
   std::shared_ptr<A2ControlBridgeNode> node_;
   rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr limited_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr status_sub_;
+  rclcpp::Subscription<a2_interfaces::msg::ControlState>::SharedPtr control_state_sub_;
   geometry_msgs::msg::TwistStamped last_limited_;
+  a2_interfaces::msg::ControlState last_control_state_;
   std::string last_status_;
   bool have_limited_{false};
   bool have_status_{false};
+  bool have_control_state_{false};
 };
 
 // ============================================================================
@@ -469,7 +521,71 @@ TEST_F(ControlBridgeTest, STATUS_003_GaitControlFieldsReflectTopicRequests)
 }
 
 // ============================================================================
-// Group 6: Parameter defaults — 3 test cases
+// Group 6: platform-facing motion command service — 4 test cases
+// ============================================================================
+
+TEST_F(ControlBridgeTest, CONTROL_SERVICE_001_MockStandUpSucceedsBeforeMapReady)
+{
+  auto response = call_motion_command(a2_interfaces::srv::MotionCommand::Request::STAND_UP);
+
+  ASSERT_TRUE(response->success);
+  EXPECT_EQ(response->sdk_code, 0);
+  EXPECT_EQ(response->error_code, "ok");
+  EXPECT_EQ(response->runtime_mode, "mock");
+
+  auto state = get_control_state();
+  EXPECT_EQ(state.runtime_mode, "mock");
+  EXPECT_EQ(state.last_command, "stand_up");
+  EXPECT_EQ(state.last_sdk_code, 0);
+  EXPECT_EQ(state.last_error_code, "ok");
+}
+
+TEST_F(ControlBridgeTest, CONTROL_SERVICE_002_UnknownCommandReturnsStandardError)
+{
+  auto response = call_motion_command("moonwalk");
+
+  ASSERT_FALSE(response->success);
+  EXPECT_EQ(response->sdk_code, -1);
+  EXPECT_EQ(response->error_code, "invalid_command");
+  EXPECT_TRUE(response->message.find("moonwalk") != std::string::npos);
+
+  auto state = get_control_state();
+  EXPECT_EQ(state.last_command, "moonwalk");
+  EXPECT_EQ(state.last_error_code, "invalid_command");
+}
+
+TEST_F(ControlBridgeTest, CONTROL_SERVICE_003_SetAutoRecoveryUpdatesStructuredState)
+{
+  auto response = call_motion_command(
+    a2_interfaces::srv::MotionCommand::Request::SET_AUTO_RECOVERY, 0, 0.0F, true);
+
+  ASSERT_TRUE(response->success);
+  EXPECT_EQ(response->error_code, "ok");
+
+  auto state = get_control_state();
+  EXPECT_TRUE(state.auto_recovery);
+  EXPECT_EQ(state.last_command, "set_auto_recovery");
+}
+
+TEST_F(ControlBridgeTest, CONTROL_SERVICE_004_EstopBlocksPostureButAllowsStop)
+{
+  publish_bool("/a2/estop", true);
+
+  auto stand_response = call_motion_command(a2_interfaces::srv::MotionCommand::Request::STAND_UP);
+  ASSERT_FALSE(stand_response->success);
+  EXPECT_EQ(stand_response->error_code, "safety_gate_closed");
+
+  auto stop_response = call_motion_command(a2_interfaces::srv::MotionCommand::Request::STOP);
+  ASSERT_TRUE(stop_response->success);
+  EXPECT_EQ(stop_response->error_code, "ok");
+
+  auto state = get_control_state();
+  EXPECT_EQ(state.last_command, "stop");
+  EXPECT_EQ(state.last_error_code, "ok");
+}
+
+// ============================================================================
+// Group 7: Parameter defaults — 3 test cases
 // ============================================================================
 
 TEST_F(ControlBridgeTest, PARAM_001_KeySafetyDefaults)
@@ -526,7 +642,7 @@ TEST_F(ControlBridgeTest, PARAM_003_GaitDefaultsAreSafeUntilEnabled)
 }
 
 // ============================================================================
-// Group 7: Integration scenarios — 2 test cases
+// Group 8: Integration scenarios — 2 test cases
 // ============================================================================
 
 TEST_F(ControlBridgeTest, INTEG_001_FullDegradationChain)

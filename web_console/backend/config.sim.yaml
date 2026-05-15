@@ -33,6 +33,8 @@ ros:
   pose_goal_status_topic: /a2/nav2/status
   sdk_status_topic: /a2/sdk/status
   control_status_topic: /a2/control/status
+  control_state_topic: /a2/control/state
+  motion_command_service: /a2/control/command
   raw_state_topic: /a2/raw_state
 
 camera:

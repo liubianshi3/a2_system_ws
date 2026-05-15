@@ -50,6 +50,8 @@ class RosTopicConfig:
     pose_goal_status_topic: str = "/a2/nav2/status"
     sdk_status_topic: str = "/a2/sdk/status"
     control_status_topic: str = "/a2/control/status"
+    control_state_topic: str = "/a2/control/state"
+    motion_command_service: str = "/a2/control/command"
     raw_state_topic: str = "/a2/raw_state"
     camera_image_topic: str = "/camera/image_raw"
     camera_compressed_topic: str = "/camera/image_raw/compressed"

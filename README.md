@@ -56,24 +56,24 @@ Or with Compose:
 
 ```bash
 cd /home/unitree/a2_system_ws
-docker compose -f docker/docker-compose.a2.yml up -d --build
+docker compose -f docker-compose.a2.yml up -d --build
 ```
 
 Useful startup modes:
 
 ```bash
 8080# Default: map exists -> navigation dry-run, else mapping.
-A2_DOCKER_START_MODE=auto docker compose -f docker/docker-compose.a2.yml up -d
+A2_DOCKER_START_MODE=auto docker compose -f docker-compose.a2.yml up -d
 
 # Web only, no robot stack.
-A2_DOCKER_START_MODE=standby docker compose -f docker/docker-compose.a2.yml up -d
+A2_DOCKER_START_MODE=standby docker compose -f docker-compose.a2.yml up -d
 
 # Force mapping.
-A2_DOCKER_START_MODE=mapping docker compose -f docker/docker-compose.a2.yml up -d
+A2_DOCKER_START_MODE=mapping docker compose -f docker-compose.a2.yml up -d
 
 # Force navigation with a specific map, still dry-run unless live motion is set.
 A2_DOCKER_START_MODE=navigation A2_NAV_MAP_ID=perfect4-29 \
-  docker compose -f docker/docker-compose.a2.yml up -d
+  docker compose -f docker-compose.a2.yml up -d
 ```
 
 Live physical motion is intentionally opt-in:
@@ -81,7 +81,7 @@ Live physical motion is intentionally opt-in:
 ```bash
 A2_DOCKER_START_MODE=navigation A2_NAV_MAP_ID=perfect4-29 \
   A2_ENABLE_MOTION=true A2_LIVE_MOTION=true \
-  docker compose -f docker/docker-compose.a2.yml up -d
+  docker compose -f docker-compose.a2.yml up -d
 ```
 
 Smoke test without starting robot motion:
@@ -106,4 +106,3 @@ before running the production container on the same port:
 ```bash
 sudo systemctl stop a2-web-console.service
 ```
-

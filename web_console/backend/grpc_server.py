@@ -682,6 +682,246 @@ class A2GrpcServices:
         def __init__(self, parent: "A2GrpcServices") -> None:
             self.p = parent
 
+        def _motion_response(self, response_type: Any, result: Any):
+            return response_type(
+                success=bool(getattr(result, "success", False)),
+                message=str(getattr(result, "message", "") or ""),
+                sdk_code=int(getattr(result, "sdk_code", 0)),
+                error_code=str(getattr(result, "error_code", "") or ""),
+                runtime_mode=str(getattr(result, "runtime_mode", "") or ""),
+                state=str(getattr(result, "state", "") or ""),
+            )
+
+        def _motion_failure_response(self, response_type: Any, message: str, error_code: str = "ros_bridge_error"):
+            return response_type(
+                success=False,
+                message=message,
+                sdk_code=0,
+                error_code=error_code,
+                runtime_mode="",
+                state="",
+            )
+
+        def _motion_auth_constant(self, name: str, fallback: int) -> int:
+            return int(getattr(self.p.robot_dog_pb2, name, fallback))
+
+        def _motion_auth_response(self, response_type: Any, **values: Any):
+            return response_type(
+                success=bool(values.get("success", False)),
+                message=str(values.get("message", "") or ""),
+                error_code=str(values.get("error_code", "") or ""),
+                state=int(values.get("state", 0) or 0),
+                required_action=int(values.get("required_action", 0) or 0),
+                standing=bool(values.get("standing", False)),
+                motion_authorized=bool(values.get("motion_authorized", False)),
+                manual_start_required=bool(values.get("manual_start_required", False)),
+                motion_mode=int(values.get("motion_mode", 0) or 0),
+                gait_type=int(values.get("gait_type", 0) or 0),
+                runtime_mode=str(values.get("runtime_mode", "") or ""),
+                timestamp=int(values.get("timestamp", _now_ms()) or _now_ms()),
+                sdk_code=int(values.get("sdk_code", 0) or 0),
+            )
+
+        def _snapshot_and_control_state(self, node: Any) -> tuple[Any | None, Any | None, Any | None]:
+            snapshot = None
+            if hasattr(node, "build_snapshot"):
+                snapshot = node.build_snapshot(
+                    ros_thread_alive=bool(self.p.ros_runtime.thread and self.p.ros_runtime.thread.is_alive())
+                )
+            status = getattr(snapshot, "status", None)
+            raw_state = getattr(status, "raw_state", None)
+            control_state = getattr(node, "control_state", None) or getattr(snapshot, "control_state", None)
+            return snapshot, raw_state, control_state
+
+        def _infer_motion_authorization(self, node: Any) -> dict[str, Any]:
+            _, raw_state, control_state = self._snapshot_and_control_state(node)
+            unknown_state = self._motion_auth_constant("MOTION_AUTHORIZATION_STATE_UNKNOWN", 1)
+            stand_down_state = self._motion_auth_constant("MOTION_AUTHORIZATION_STATE_STAND_DOWN", 2)
+            manual_start_state = self._motion_auth_constant("MOTION_AUTHORIZATION_STATE_MANUAL_START_REQUIRED", 4)
+            authorized_state = self._motion_auth_constant("MOTION_AUTHORIZATION_STATE_AUTHORIZED", 5)
+            moving_state = self._motion_auth_constant("MOTION_AUTHORIZATION_STATE_MOVING", authorized_state)
+            none_action = self._motion_auth_constant("MOTION_AUTHORIZATION_ACTION_NONE", 1)
+            stand_up_action = self._motion_auth_constant("MOTION_AUTHORIZATION_ACTION_STAND_UP", 2)
+            remote_start_action = self._motion_auth_constant("MOTION_AUTHORIZATION_ACTION_PRESS_REMOTE_START", 3)
+
+            runtime_mode = str(getattr(control_state, "runtime_mode", "") or "")
+            last_command = str(getattr(control_state, "last_command", "") or "").lower()
+            last_error_code = str(getattr(control_state, "last_error_code", "") or "")
+            try:
+                sdk_code = int(getattr(control_state, "last_sdk_code", 0) or 0)
+            except Exception:
+                sdk_code = 0
+
+            motion_mode = 0
+            gait_type = 0
+            if raw_state is not None:
+                try:
+                    motion_mode = int(getattr(raw_state, "motion_mode", 0) or 0)
+                except Exception:
+                    motion_mode = 0
+                try:
+                    gait_type = int(getattr(raw_state, "gait_type", 0) or 0)
+                except Exception:
+                    gait_type = 0
+            if gait_type == 0:
+                try:
+                    gait_type = int(getattr(control_state, "gait_type", 0) or 0)
+                except Exception:
+                    gait_type = 0
+
+            if raw_state is not None and getattr(raw_state, "connected", True) is False:
+                return {
+                    "success": False,
+                    "message": "motion authorization state unavailable: robot state is disconnected",
+                    "error_code": "state_unavailable",
+                    "state": unknown_state,
+                    "required_action": none_action,
+                    "standing": False,
+                    "motion_authorized": False,
+                    "manual_start_required": False,
+                    "motion_mode": motion_mode,
+                    "gait_type": gait_type,
+                    "runtime_mode": runtime_mode,
+                    "sdk_code": sdk_code,
+                }
+
+            body_height = getattr(raw_state, "body_height", None)
+            standing: bool | None
+            if isinstance(body_height, (int, float)) and math.isfinite(float(body_height)):
+                standing = float(body_height) >= 0.2
+            elif last_command in {"stand_down", "damp"}:
+                standing = False
+            elif last_command in {
+                "balance_stand",
+                "body_height",
+                "move",
+                "recovery_stand",
+                "set_auto_recovery",
+                "speed_level",
+                "stand_up",
+                "switch_gait",
+                "walk",
+            }:
+                standing = True
+            else:
+                standing = None
+
+            if standing is None:
+                return {
+                    "success": False,
+                    "message": "motion authorization state unavailable",
+                    "error_code": "state_unavailable",
+                    "state": unknown_state,
+                    "required_action": none_action,
+                    "standing": False,
+                    "motion_authorized": False,
+                    "manual_start_required": False,
+                    "motion_mode": motion_mode,
+                    "gait_type": gait_type,
+                    "runtime_mode": runtime_mode,
+                    "sdk_code": sdk_code,
+                }
+
+            if not standing:
+                return {
+                    "success": False,
+                    "message": "stand up before requesting motion authorization",
+                    "error_code": "stand_up_required",
+                    "state": stand_down_state,
+                    "required_action": stand_up_action,
+                    "standing": False,
+                    "motion_authorized": False,
+                    "manual_start_required": False,
+                    "motion_mode": motion_mode,
+                    "gait_type": gait_type,
+                    "runtime_mode": runtime_mode,
+                    "sdk_code": sdk_code,
+                }
+
+            motion_authorized = last_command in {"move", "walk"} and sdk_code == 0 and not last_error_code
+            if motion_authorized:
+                return {
+                    "success": True,
+                    "message": "motion authorization available",
+                    "error_code": "ok",
+                    "state": moving_state if last_command in {"move", "walk"} else authorized_state,
+                    "required_action": none_action,
+                    "standing": True,
+                    "motion_authorized": True,
+                    "manual_start_required": False,
+                    "motion_mode": motion_mode,
+                    "gait_type": gait_type,
+                    "runtime_mode": runtime_mode,
+                    "sdk_code": sdk_code,
+                }
+
+            return {
+                "success": False,
+                "message": "press remote Start after the robot is standing",
+                "error_code": "manual_start_required",
+                "state": manual_start_state,
+                "required_action": remote_start_action,
+                "standing": True,
+                "motion_authorized": False,
+                "manual_start_required": True,
+                "motion_mode": motion_mode,
+                "gait_type": gait_type,
+                "runtime_mode": runtime_mode,
+                "sdk_code": sdk_code,
+            }
+
+        def _publish_zero_velocity(self, node: Any) -> None:
+            from geometry_msgs.msg import Twist
+
+            msg = Twist()
+            for publisher_name in ("cancel_stop_publisher", "direct_cmd_publisher"):
+                publisher = getattr(node, publisher_name, None)
+                if publisher is not None:
+                    publisher.publish(msg)
+
+        async def _call_motion_command(
+            self,
+            context: grpc.aio.ServicerContext,
+            *,
+            command: str,
+            int_value: int = 0,
+            float_value: float = 0.0,
+            bool_value: bool = False,
+        ) -> Any:
+            node = await self.p._node_or_abort(context)
+            if not hasattr(node, "call_motion_command"):
+                raise RosBridgeError("a2 motion command bridge is not available")
+            return await asyncio.to_thread(
+                node.call_motion_command,
+                command,
+                int(int_value),
+                float(float_value),
+                bool(bool_value),
+            )
+
+        async def _motion_rpc(
+            self,
+            request: Any,
+            context: grpc.aio.ServicerContext,
+            response_type: Any,
+            *,
+            command: str,
+            int_value: int = 0,
+            float_value: float = 0.0,
+            bool_value: bool = False,
+        ) -> Any:
+            try:
+                result = await self._call_motion_command(
+                    context,
+                    command=command,
+                    int_value=int_value,
+                    float_value=float_value,
+                    bool_value=bool_value,
+                )
+            except RosBridgeError as exc:
+                return self._motion_failure_response(response_type, str(exc))
+            return self._motion_response(response_type, result)
+
         async def SetMode(self, request, context):
             device_id = (request.device_id or "").strip() or "a2"
             self.p.robot_mode[device_id] = int(request.mode or 0)
@@ -700,7 +940,7 @@ class A2GrpcServices:
             msg.linear.x = float(request.velocity_x)
             msg.linear.y = float(request.velocity_y)
             msg.angular.z = float(request.angular_velocity)
-            node.cancel_stop_publisher.publish(msg)
+            node.direct_cmd_publisher.publish(msg)
             return self.p.robot_dog_pb2.MoveResponse(success=True, message="ok", task_id=str(_now_ms()))
 
         async def Walk(self, request, context):
@@ -711,7 +951,7 @@ class A2GrpcServices:
             msg.linear.x = float(request.x)
             msg.linear.y = float(request.y)
             msg.angular.z = float(request.theta)
-            node.cancel_stop_publisher.publish(msg)
+            node.direct_cmd_publisher.publish(msg)
             return self.p.robot_dog_pb2.WalkResponse(success=True, message="ok", task_id=str(_now_ms()))
 
         async def Stop(self, request, context):
@@ -720,7 +960,15 @@ class A2GrpcServices:
 
             msg = Twist()
             node.cancel_stop_publisher.publish(msg)
-            return self.p.robot_dog_pb2.StopResponse(success=True, message="ok")
+            node.direct_cmd_publisher.publish(msg)
+            try:
+                result = await self._call_motion_command(context, command="stop")
+            except RosBridgeError as exc:
+                return self.p.robot_dog_pb2.StopResponse(success=False, message=str(exc))
+            return self.p.robot_dog_pb2.StopResponse(
+                success=bool(getattr(result, "success", False)),
+                message=str(getattr(result, "message", "") or "ok"),
+            )
 
         async def GetBattery(self, request, context):
             node = await self.p._node_or_abort(context)
@@ -759,7 +1007,29 @@ class A2GrpcServices:
             )
 
         async def SetPosture(self, request, context):
-            return self.p.robot_dog_pb2.PostureResponse(success=False, message="posture control is not available")
+            posture = int(request.posture or 0)
+            if posture == int(self.p.robot_dog_pb2.POSTURE_TYPE_STAND):
+                try:
+                    result = await self._call_motion_command(context, command="stand_up")
+                except RosBridgeError as exc:
+                    return self.p.robot_dog_pb2.PostureResponse(success=False, message=str(exc))
+                return self.p.robot_dog_pb2.PostureResponse(
+                    success=bool(getattr(result, "success", False)),
+                    message=str(getattr(result, "message", "") or "ok"),
+                )
+            if posture == int(self.p.robot_dog_pb2.POSTURE_TYPE_LIE):
+                try:
+                    result = await self._call_motion_command(context, command="stand_down")
+                except RosBridgeError as exc:
+                    return self.p.robot_dog_pb2.PostureResponse(success=False, message=str(exc))
+                return self.p.robot_dog_pb2.PostureResponse(
+                    success=bool(getattr(result, "success", False)),
+                    message=str(getattr(result, "message", "") or "ok"),
+                )
+            return self.p.robot_dog_pb2.PostureResponse(
+                success=False,
+                message="unsupported posture; use StandUp, StandDown, BalanceStand, RecoveryStand, or Damp",
+            )
 
         async def GetSensors(self, request, context):
             node = await self.p._node_or_abort(context)
@@ -793,6 +1063,168 @@ class A2GrpcServices:
                     mode=mode,
                 )
                 await asyncio.sleep(1.0)
+
+        async def BalanceStand(self, request, context):
+            return await self._motion_rpc(
+                request,
+                context,
+                self.p.robot_dog_pb2.BalanceStandResponse,
+                command="balance_stand",
+            )
+
+        async def StandUp(self, request, context):
+            return await self._motion_rpc(
+                request,
+                context,
+                self.p.robot_dog_pb2.StandUpResponse,
+                command="stand_up",
+            )
+
+        async def StandDown(self, request, context):
+            return await self._motion_rpc(
+                request,
+                context,
+                self.p.robot_dog_pb2.StandDownResponse,
+                command="stand_down",
+            )
+
+        async def RecoveryStand(self, request, context):
+            return await self._motion_rpc(
+                request,
+                context,
+                self.p.robot_dog_pb2.RecoveryStandResponse,
+                command="recovery_stand",
+            )
+
+        async def Damp(self, request, context):
+            return await self._motion_rpc(
+                request,
+                context,
+                self.p.robot_dog_pb2.DampResponse,
+                command="damp",
+            )
+
+        async def SetAutoRecovery(self, request, context):
+            return await self._motion_rpc(
+                request,
+                context,
+                self.p.robot_dog_pb2.SetAutoRecoveryResponse,
+                command="set_auto_recovery",
+                bool_value=bool(request.enabled),
+            )
+
+        async def SwitchGait(self, request, context):
+            return await self._motion_rpc(
+                request,
+                context,
+                self.p.robot_dog_pb2.SwitchGaitResponse,
+                command="switch_gait",
+                int_value=int(request.gait_type),
+            )
+
+        async def SetSpeedLevel(self, request, context):
+            return await self._motion_rpc(
+                request,
+                context,
+                self.p.robot_dog_pb2.SetSpeedLevelResponse,
+                command="speed_level",
+                int_value=int(request.level),
+            )
+
+        async def SetBodyHeight(self, request, context):
+            return await self._motion_rpc(
+                request,
+                context,
+                self.p.robot_dog_pb2.SetBodyHeightResponse,
+                command="body_height",
+                float_value=float(request.height),
+            )
+
+        async def GetControlState(self, request, context):
+            node = await self.p._node_or_abort(context)
+            device_id = (request.device_id or "").strip() or "a2"
+            state = getattr(node, "control_state", None)
+            if state is None and hasattr(node, "build_snapshot"):
+                snapshot = node.build_snapshot(
+                    ros_thread_alive=bool(self.p.ros_runtime.thread and self.p.ros_runtime.thread.is_alive())
+                )
+                state = getattr(snapshot, "control_state", None)
+            if state is None:
+                state = type("ControlStateFallback", (), {})()
+            return self.p.robot_dog_pb2.GetControlStateResponse(
+                device_id=device_id,
+                runtime_mode=str(getattr(state, "runtime_mode", "") or ""),
+                state=str(getattr(state, "state", "") or ""),
+                ready=bool(getattr(state, "ready", False)),
+                reason=str(getattr(state, "reason", "") or ""),
+                interface_name=str(getattr(state, "interface_name", "") or ""),
+                gait_control_enabled=bool(getattr(state, "gait_control_enabled", False)),
+                gait_type=int(getattr(state, "gait_type", 0)),
+                speed_level=int(getattr(state, "speed_level", 0)),
+                body_height=float(getattr(state, "body_height", 0.0)),
+                auto_recovery=bool(getattr(state, "auto_recovery", False)),
+                last_command=str(getattr(state, "last_command", "") or ""),
+                last_sdk_code=int(getattr(state, "last_sdk_code", 0)),
+                last_error_code=str(getattr(state, "last_error_code", "") or ""),
+                last_error_reason=str(getattr(state, "last_error_reason", "") or ""),
+                timestamp=_iso_to_ms(getattr(state, "stamp", None)),
+            )
+
+        async def GetMotionAuthorization(self, request, context):
+            node = await self.p._node_or_abort(context)
+            values = self._infer_motion_authorization(node)
+            values["timestamp"] = _now_ms()
+            return self._motion_auth_response(self.p.robot_dog_pb2.GetMotionAuthorizationResponse, **values)
+
+        async def AuthorizeMotion(self, request, context):
+            node = await self.p._node_or_abort(context)
+            values = self._infer_motion_authorization(node)
+            values["timestamp"] = _now_ms()
+            return self._motion_auth_response(self.p.robot_dog_pb2.AuthorizeMotionResponse, **values)
+
+        async def ReleaseMotionAuthorization(self, request, context):
+            node = await self.p._node_or_abort(context)
+            current = self._infer_motion_authorization(node)
+            self._publish_zero_velocity(node)
+            try:
+                result = await self._call_motion_command(context, command="stop")
+            except RosBridgeError as exc:
+                return self._motion_auth_response(
+                    self.p.robot_dog_pb2.ReleaseMotionAuthorizationResponse,
+                    success=False,
+                    message=str(exc),
+                    error_code="ros_bridge_error",
+                    state=current.get("state", 0),
+                    required_action=self._motion_auth_constant("MOTION_AUTHORIZATION_ACTION_STOP", 4),
+                    standing=current.get("standing", False),
+                    motion_authorized=False,
+                    manual_start_required=bool(current.get("standing", False)),
+                    motion_mode=current.get("motion_mode", 0),
+                    gait_type=current.get("gait_type", 0),
+                    runtime_mode=current.get("runtime_mode", ""),
+                    timestamp=_now_ms(),
+                    sdk_code=0,
+                )
+            success = bool(getattr(result, "success", False))
+            error_code = str(getattr(result, "error_code", "") or ("ok" if success else "motion_stop_failed"))
+            return self._motion_auth_response(
+                self.p.robot_dog_pb2.ReleaseMotionAuthorizationResponse,
+                success=success,
+                message=str(getattr(result, "message", "") or ("motion stop accepted" if success else "motion stop failed")),
+                error_code=error_code,
+                state=self._motion_auth_constant("MOTION_AUTHORIZATION_STATE_MANUAL_START_REQUIRED", 4)
+                if current.get("standing", False)
+                else current.get("state", 0),
+                required_action=self._motion_auth_constant("MOTION_AUTHORIZATION_ACTION_STOP", 4),
+                standing=current.get("standing", False),
+                motion_authorized=False,
+                manual_start_required=bool(current.get("standing", False)),
+                motion_mode=current.get("motion_mode", 0),
+                gait_type=current.get("gait_type", 0),
+                runtime_mode=str(getattr(result, "runtime_mode", "") or current.get("runtime_mode", "")),
+                timestamp=_now_ms(),
+                sdk_code=int(getattr(result, "sdk_code", 0) or 0),
+            )
 
 
 class GrpcServer:

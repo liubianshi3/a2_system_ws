@@ -1,6 +1,6 @@
 server:
   host: 0.0.0.0
-  port: 8080
+  port: 18080
   allow_non_lan_access: false
   cors_origins: []
   static_dir: backend/static
@@ -9,7 +9,7 @@ server:
 grpc:
   enabled: true
   host: 0.0.0.0
-  port: 50051
+  port: 55051
 
 ros:
   map_topic: /map
@@ -111,7 +111,7 @@ native_slam:
   response_topic: /api/slam_operate/response
   response_timeout_sec: 5.0
   mapping_type: indoor
-  save_root: /home/unitree/dist/maps
+  save_root: /opt/a2_system_ws/runtime/maps/native
 
 stack:
   workspace: /opt/a2_system_ws

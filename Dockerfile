@@ -93,6 +93,7 @@ RUN if [[ "${TARGETARCH:-}" == "amd64" ]]; then \
 
 WORKDIR /opt/a2_system_ws
 ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+ARG A2_REQUIRE_UNITREE_SDK=OFF
 
 COPY web_console/backend/requirements.txt ./web_console/backend/requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
@@ -114,6 +115,7 @@ RUN --mount=type=cache,target=/root/.ccache,sharing=locked \
     && colcon build --event-handlers console_direct+ --packages-select ${OUR_PACKAGES} --cmake-args \
         -DCMAKE_C_COMPILER_LAUNCHER=ccache \
         -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+        -DA2_REQUIRE_UNITREE_SDK=${A2_REQUIRE_UNITREE_SDK} \
     && rm -rf build log
 
 COPY web_console/backend ./web_console/backend

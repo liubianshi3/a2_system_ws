@@ -2,6 +2,7 @@
 #define A2_CONTROL_BRIDGE_NODE_HPP
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <iomanip>
 #include <memory>
@@ -9,6 +10,8 @@
 #include <string>
 #include <vector>
 
+#include "a2_interfaces/msg/control_state.hpp"
+#include "a2_interfaces/srv/motion_command.hpp"
 #include "a2_system/network_utils.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "geometry_msgs/msg/twist_stamped.hpp"
@@ -67,13 +70,21 @@ public:
     gait_type_topic_ = declare_parameter<std::string>("gait_type_topic", "/a2/control/gait_type");
     speed_level_topic_ = declare_parameter<std::string>("speed_level_topic", "/a2/control/speed_level");
     body_height_topic_ = declare_parameter<std::string>("body_height_topic", "/a2/control/body_height");
+    motion_command_service_ = declare_parameter<std::string>("motion_command_service", "/a2/control/command");
+    control_state_topic_ = declare_parameter<std::string>("control_state_topic", "/a2/control/state");
     gait_state_ = gait_control_enabled_ ? "pending" : "disabled";
 
     debug_pub_ = create_publisher<geometry_msgs::msg::TwistStamped>("/a2/command_limited", 10);
     control_status_pub_ = create_publisher<std_msgs::msg::String>("/a2/control/status", 10);
+    control_state_pub_ = create_publisher<a2_interfaces::msg::ControlState>(control_state_topic_, 10);
     if (!sim_cmd_topic_.empty()) {
       sim_cmd_pub_ = create_publisher<geometry_msgs::msg::Twist>(sim_cmd_topic_, 10);
     }
+    motion_command_srv_ = create_service<a2_interfaces::srv::MotionCommand>(
+      motion_command_service_,
+      std::bind(
+        &A2ControlBridgeNode::on_motion_command, this,
+        std::placeholders::_1, std::placeholders::_2));
     cmd_sub_ = create_subscription<geometry_msgs::msg::Twist>(
       cmd_topic_, 10, std::bind(&A2ControlBridgeNode::on_cmd, this, std::placeholders::_1));
     estop_sub_ = create_subscription<std_msgs::msg::Bool>(
@@ -183,6 +194,9 @@ public:
   // All private members remain private; tests interact through ROS topics.
 
 private:
+  static constexpr int32_t kInterfaceNotReadyCode = -100;
+  static constexpr int32_t kSdkUnavailableCode = -101;
+
   std::string resolve_interface() const
   {
     if (runtime_mode_ == "gazebo") {
@@ -218,12 +232,33 @@ private:
       ";speed_level=" + std::to_string(speed_level_) +
       ";body_height=" + format_double(body_height_) +
       ";gait_state=" + status_gait_state() +
-      ";last_gait_error=" + last_gait_error_;
+      ";last_gait_error=" + last_gait_error_ +
+      ";last_command=" + last_motion_command_ +
+      ";last_sdk_code=" + std::to_string(last_sdk_code_) +
+      ";last_error_code=" + last_error_code_;
     control_status_pub_->publish(status_msg);
     if (status_msg.data != last_control_status_) {
       last_control_status_ = status_msg.data;
       RCLCPP_INFO(get_logger(), "control status: %s", status_msg.data.c_str());
     }
+
+    a2_interfaces::msg::ControlState state_msg;
+    state_msg.stamp = now();
+    state_msg.runtime_mode = runtime_mode_;
+    state_msg.state = state;
+    state_msg.ready = ready;
+    state_msg.reason = reason;
+    state_msg.interface_name = resolved_interface_.empty() ? "none" : resolved_interface_;
+    state_msg.gait_control_enabled = gait_control_enabled_;
+    state_msg.gait_type = gait_type_;
+    state_msg.speed_level = speed_level_;
+    state_msg.body_height = static_cast<float>(body_height_);
+    state_msg.auto_recovery = auto_recovery_;
+    state_msg.last_command = last_motion_command_;
+    state_msg.last_sdk_code = last_sdk_code_;
+    state_msg.last_error_code = last_error_code_;
+    state_msg.last_error_reason = last_error_reason_;
+    control_state_pub_->publish(state_msg);
   }
 
   void on_cmd(const geometry_msgs::msg::Twist::SharedPtr msg)
@@ -238,11 +273,188 @@ private:
     return value ? "true" : "false";
   }
 
+  static std::string normalize_command(std::string command)
+  {
+    const auto first = command.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) {
+      return "";
+    }
+    const auto last = command.find_last_not_of(" \t\r\n");
+    command = command.substr(first, last - first + 1);
+    std::transform(command.begin(), command.end(), command.begin(), [](unsigned char ch) {
+      return static_cast<char>(std::tolower(ch));
+    });
+    return command;
+  }
+
+  static bool is_known_motion_command(const std::string & command)
+  {
+    return command == "stop" ||
+      command == "balance_stand" ||
+      command == "stand_up" ||
+      command == "stand_down" ||
+      command == "recovery_stand" ||
+      command == "damp" ||
+      command == "switch_gait" ||
+      command == "speed_level" ||
+      command == "body_height" ||
+      command == "set_auto_recovery";
+  }
+
+  static bool command_bypasses_posture_gate(const std::string & command)
+  {
+    return command == "stop" || command == "damp" || command == "set_auto_recovery";
+  }
+
+  std::string posture_gate_block_reason(const std::string & command) const
+  {
+    if (command_bypasses_posture_gate(command)) {
+      return "";
+    }
+    if (estop_) {
+      return "estop";
+    }
+    if (!allow_motion_) {
+      return "allow_motion_false";
+    }
+    return "";
+  }
+
   static std::string format_double(double value)
   {
     std::ostringstream out;
     out << std::fixed << std::setprecision(3) << value;
     return out.str();
+  }
+
+  void finish_motion_command(
+    const a2_interfaces::srv::MotionCommand::Response::SharedPtr & response,
+    bool success,
+    int32_t sdk_code,
+    const std::string & error_code,
+    const std::string & message)
+  {
+    last_sdk_code_ = sdk_code;
+    last_error_code_ = error_code;
+    last_error_reason_ = message;
+
+    response->success = success;
+    response->message = message;
+    response->sdk_code = sdk_code;
+    response->error_code = error_code;
+    response->runtime_mode = runtime_mode_;
+    response->state = success ? "ready" : "error";
+
+    publish_control_status(response->state, success, error_code);
+  }
+
+  void on_motion_command(
+    const a2_interfaces::srv::MotionCommand::Request::SharedPtr request,
+    a2_interfaces::srv::MotionCommand::Response::SharedPtr response)
+  {
+    const std::string command = normalize_command(request->command);
+    last_motion_command_ = command.empty() ? request->command : command;
+
+    if (!is_known_motion_command(command)) {
+      finish_motion_command(
+        response, false, -1, "invalid_command",
+        "unsupported motion command: " + request->command);
+      return;
+    }
+
+    const std::string block_reason = posture_gate_block_reason(command);
+    if (!block_reason.empty()) {
+      finish_motion_command(
+        response, false, -2, "safety_gate_closed",
+        "motion command blocked by " + block_reason);
+      return;
+    }
+
+    const int32_t sdk_code = execute_motion_command(command, *request);
+    if (sdk_code == 0) {
+      finish_motion_command(response, true, 0, "ok", "motion command accepted: " + command);
+    } else if (sdk_code == kInterfaceNotReadyCode) {
+      finish_motion_command(response, false, sdk_code, "interface_not_ready", "real control interface is not ready");
+    } else if (sdk_code == kSdkUnavailableCode) {
+      finish_motion_command(response, false, sdk_code, "sdk_unavailable", "Unitree SportClient is unavailable");
+    } else {
+      finish_motion_command(
+        response, false, sdk_code, "sdk_failed",
+        "Unitree SportClient command failed: " + command);
+    }
+  }
+
+  int32_t execute_motion_command(
+    const std::string & command,
+    const a2_interfaces::srv::MotionCommand::Request & request)
+  {
+    if (command == "switch_gait") {
+      gait_type_ = clamp_int(request.int_value, gait_type_min_, gait_type_max_);
+      mark_gait_pending();
+    } else if (command == "speed_level") {
+      speed_level_ = clamp_int(request.int_value, speed_level_min_, speed_level_max_);
+      mark_gait_pending();
+    } else if (command == "body_height") {
+      body_height_ = clamp_range(static_cast<double>(request.float_value), body_height_min_, body_height_max_);
+      mark_gait_pending();
+    } else if (command == "set_auto_recovery") {
+      auto_recovery_ = request.bool_value;
+    } else if (command == "balance_stand") {
+      prepared_ = true;
+      preparing_ = false;
+    } else if (command == "stop") {
+      latest_cmd_ = geometry_msgs::msg::Twist();
+      have_cmd_ = false;
+      was_active_ = false;
+    }
+
+    if (runtime_mode_ != "real") {
+      return 0;
+    }
+
+#if A2_ENABLE_UNITREE_SDK
+    if (!real_interface_ready_) {
+      return kInterfaceNotReadyCode;
+    }
+    if (!sport_client_) {
+      return kSdkUnavailableCode;
+    }
+    if (command == "stop") {
+      return sport_client_->StopMove();
+    }
+    if (command == "balance_stand") {
+      return sport_client_->BalanceStand();
+    }
+    if (command == "stand_up") {
+      return sport_client_->StandUp();
+    }
+    if (command == "stand_down") {
+      return sport_client_->StandDown();
+    }
+    if (command == "recovery_stand") {
+      return sport_client_->RecoveryStand();
+    }
+    if (command == "damp") {
+      return sport_client_->Damp();
+    }
+    if (command == "switch_gait") {
+      return sport_client_->SwitchGait(gait_type_);
+    }
+    if (command == "speed_level") {
+      return sport_client_->SpeedLevel(speed_level_);
+    }
+    if (command == "body_height") {
+      return sport_client_->BodyHeight(static_cast<float>(body_height_));
+    }
+    if (command == "set_auto_recovery") {
+      return sport_client_->SetAutoRecovery(auto_recovery_ ? 1 : 0);
+    }
+#else
+    (void)command;
+    (void)request;
+    return kSdkUnavailableCode;
+#endif
+    return -1;
   }
 
   void mark_gait_pending()
@@ -511,6 +723,7 @@ private:
   bool estop_{false};
   bool prepared_{false};
   bool was_active_{false};
+  bool auto_recovery_{false};
 
   std::string network_interface_;
   std::vector<std::string> interface_candidates_;
@@ -524,8 +737,13 @@ private:
   std::string gait_type_topic_;
   std::string speed_level_topic_;
   std::string body_height_topic_;
+  std::string motion_command_service_;
+  std::string control_state_topic_;
   std::string gait_state_{"disabled"};
   std::string last_gait_error_{"none"};
+  std::string last_motion_command_{"none"};
+  std::string last_error_code_{"ok"};
+  std::string last_error_reason_{"none"};
 
   double max_linear_x_{0.4};
   double max_linear_y_{0.25};
@@ -542,6 +760,7 @@ private:
   int speed_level_{1};
   int speed_level_min_{0};
   int speed_level_max_{3};
+  int32_t last_sdk_code_{0};
   float nav_speed_scale_{1.0f};
 
   geometry_msgs::msg::Twist latest_cmd_;
@@ -560,6 +779,8 @@ private:
   rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr debug_pub_;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr sim_cmd_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr control_status_pub_;
+  rclcpp::Publisher<a2_interfaces::msg::ControlState>::SharedPtr control_state_pub_;
+  rclcpp::Service<a2_interfaces::srv::MotionCommand>::SharedPtr motion_command_srv_;
   rclcpp::TimerBase::SharedPtr timer_;
   std::string last_control_status_;
 

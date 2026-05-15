@@ -17,6 +17,66 @@ log() {
   printf '[a2-docker] %s\n' "$*"
 }
 
+is_true() {
+  [[ "${1:-}" == "true" || "${1:-}" == "1" || "${1:-}" == "yes" || "${1:-}" == "on" ]]
+}
+
+start_standby_control_bridge() {
+  local enabled="${A2_CONTROL_BRIDGE_AUTOSTART:-false}"
+  if ! is_true "$enabled"; then
+    return 0
+  fi
+
+  local mode="${A2_DOCKER_START_MODE:-auto}"
+  if [[ "$mode" != "web" && "$mode" != "standby" && "$mode" != "none" ]]; then
+    log "control bridge autostart skipped mode=${mode}; stack startup owns it"
+    return 0
+  fi
+
+  local params_file="${A2_WORKSPACE}/install/a2_system/share/a2_system/config/motion_limits.yaml"
+  if [[ ! -f "$params_file" ]]; then
+    params_file="${A2_WORKSPACE}/src/a2_system/config/motion_limits.yaml"
+  fi
+  if [[ ! -f "$params_file" ]]; then
+    log "control bridge autostart skipped; params file not found"
+    return 0
+  fi
+
+  local control_iface="${A2_CONTROL_INTERFACE:-${A2_SDK_INTERFACE:-${A2_NETWORK_INTERFACE:-eth0}}}"
+  local cmd_topic="${A2_CONTROL_CMD_TOPIC:-/cmd_vel_safe}"
+  local allow_without_map="${A2_CONTROL_ALLOW_WITHOUT_MAP:-false}"
+  local allow_without_localization="${A2_CONTROL_ALLOW_WITHOUT_LOCALIZATION:-false}"
+  local max_linear_x="${A2_CONTROL_MAX_LINEAR_X:-0.20}"
+  local max_linear_y="${A2_CONTROL_MAX_LINEAR_Y:-0.10}"
+  local max_yaw_rate="${A2_CONTROL_MAX_YAW_RATE:-0.30}"
+  local cmd_timeout_sec="${A2_CONTROL_CMD_TIMEOUT_SEC:-0.30}"
+  local log_file="${A2_WORKSPACE}/runtime/logs/a2_control_bridge_standby.log"
+  local ld_preload="${A2_CONTROL_BRIDGE_LD_PRELOAD:-}"
+  local env_args=()
+
+  if [[ -n "$ld_preload" ]]; then
+    env_args+=("LD_PRELOAD=${ld_preload}")
+  fi
+
+  log "autostarting standby control bridge iface=${control_iface} topic=${cmd_topic}"
+  nohup env "${env_args[@]}" ros2 run a2_control_bridge a2_control_bridge_node \
+    --ros-args \
+    --params-file "$params_file" \
+    -p use_mock:=false \
+    -p runtime_mode:=real \
+    -p allow_loopback:=false \
+    -p network_interface:="$control_iface" \
+    -p cmd_topic:="$cmd_topic" \
+    -p allow_motion_without_map:="$allow_without_map" \
+    -p allow_motion_without_localization:="$allow_without_localization" \
+    -p max_linear_x:="$max_linear_x" \
+    -p max_linear_y:="$max_linear_y" \
+    -p max_yaw_rate:="$max_yaw_rate" \
+    -p cmd_timeout_sec:="$cmd_timeout_sec" \
+    > "$log_file" 2>&1 &
+  log "standby control bridge log=${log_file}"
+}
+
 find_latest_3d_map() {
   python3 - "${A2_WORKSPACE}" "${A2_REQUIRE_NAV2_MAP:-true}" <<'PY'
 from pathlib import Path
@@ -130,6 +190,7 @@ start_a2_stack() {
   return 0
 }
 
+start_standby_control_bridge
 start_a2_stack
 
 # Keep the container alive with the Web console backend in the foreground.

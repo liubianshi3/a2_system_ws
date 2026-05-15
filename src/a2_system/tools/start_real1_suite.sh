@@ -374,7 +374,7 @@ fi
 log "Stopping dockerized web stack if present"
 (
   cd "$WORKSPACE"
-  docker compose -f docker/docker-compose.a2.yml down
+  docker compose -f docker-compose.a2.yml down
 ) >/dev/null 2>&1 || true
 
 log "Stopping host web service"
