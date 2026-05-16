@@ -12,7 +12,6 @@ from launch_ros.actions import Node
 def generate_launch_description():
     a2_system_share = get_package_share_directory("a2_system")
     use_sim_time = LaunchConfiguration("use_sim_time")
-    use_sim_time_text = "false"
     map_yaml = LaunchConfiguration("map")
 
     try:
@@ -41,7 +40,7 @@ def generate_launch_description():
         LogInfo(
             msg=(
                 "Starting Nav2 3D navigation stack. "
-                "Requires: NDT localization, DLIO odom, ground_segmentation. "
+                "Requires: NDT localization, /odometry/local, ground_segmentation. "
                 "map argument must point to a 2D projection of the PCD map."
             )
         ),
@@ -63,6 +62,9 @@ def generate_launch_description():
             ),
             launch_arguments={
                 "use_sim_time": use_sim_time,
+                "enable_ekf": LaunchConfiguration("enable_global_ekf_debug"),
+                "output_topic": "/odometry/global_debug",
+                "enable_odom_to_pose_bridge": "false",
             }.items(),
             condition=IfCondition(LaunchConfiguration("enable_global_ekf_debug")),
         ),
@@ -93,7 +95,7 @@ def generate_launch_description():
             parameters=[f"{a2_system_share}/config/nav2.yaml", {
                 "runtime_mode": "real",
                 "navigation_backend": "nav2",
-                "pose_goal_topic": "/goal_pose",
+                "pose_goal_topic": "/a2/nav3/goal_pose",
                 "map_frame": "map",
                 "use_sim_time": use_sim_time,
             }],
@@ -107,16 +109,49 @@ def generate_launch_description():
                  '/tmp/a2_navigate_3d.xml'],
             output='screen',
         ),
+        ExecuteProcess(
+            cmd=['cp', '-f',
+                 os.path.join(a2_system_share, 'config', 'a2_navigate_through_poses_3d.xml'),
+                 '/tmp/a2_navigate_through_poses_3d.xml'],
+            output='screen',
+        ),
 
-        # Nav2 bringup with 3D config
+        # Map server only. NDT owns map->odom localization, so we avoid AMCL.
+        Node(
+            package="nav2_map_server",
+            executable="map_server",
+            name="map_server",
+            parameters=[
+                f"{a2_system_share}/config/nav2_3d.yaml",
+                {
+                    "yaml_filename": map_yaml,
+                    "use_sim_time": use_sim_time,
+                },
+            ],
+            output="screen",
+        ),
+        Node(
+            package="nav2_lifecycle_manager",
+            executable="lifecycle_manager",
+            name="lifecycle_manager_localization",
+            parameters=[
+                f"{a2_system_share}/config/nav2_3d.yaml",
+                {
+                    "autostart": True,
+                    "node_names": ["map_server"],
+                    "use_sim_time": use_sim_time,
+                },
+            ],
+            output="screen",
+        ),
+
+        # Nav2 planning/control stack. Localization is provided by NDT + EKF.
         IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(f"{nav2_share}/launch/bringup_launch.py"),
+            PythonLaunchDescriptionSource(f"{nav2_share}/launch/navigation_launch.py"),
             launch_arguments={
-                "use_sim_time": use_sim_time_text,
+                "use_sim_time": use_sim_time,
                 "params_file": f"{a2_system_share}/config/nav2_3d.yaml",
                 "autostart": "true",
-                "map": map_yaml,
-                "slam": "False",
                 "use_composition": "False",
                 "use_respawn": "False",
             }.items(),

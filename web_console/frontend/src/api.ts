@@ -2,10 +2,13 @@ import type {
   DashboardSnapshot,
   InitialPoseRequestPayload,
   InitialPoseResult,
+  LightStatusPayload,
   MapMediaListing,
   NavigationGoal,
   NavigationTaskState,
   SavedMapInfo,
+  SetLightDebugResponse,
+  SetLightRequestPayload,
   StackStatus,
   SystemHealth,
   TaskRouteDetail,
@@ -73,13 +76,27 @@ export async function startMappingStack(): Promise<StackStatus> {
   return payload.stack;
 }
 
-export async function startNavigationStack(mapId: string): Promise<StackStatus> {
+export async function startNavigationStack(
+  mapId: string,
+  options?: {
+    localization_mode?: string;
+    motion_mode?: string;
+    enable_nav2_3d?: boolean;
+    collision_monitor_profile?: string;
+  },
+): Promise<StackStatus> {
   const response = await fetch("/api/stack/start-navigation", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ map_id: mapId }),
+    body: JSON.stringify({
+      map_id: mapId,
+      localization_mode: options?.localization_mode ?? "ndt",
+      motion_mode: options?.motion_mode ?? "dry_run",
+      enable_nav2_3d: options?.enable_nav2_3d ?? true,
+      collision_monitor_profile: options?.collision_monitor_profile ?? "strict",
+    }),
   });
   const payload = await handleJson<{ ok: boolean; message: string; stack: StackStatus }>(response);
   return payload.stack;
@@ -194,4 +211,19 @@ export async function stopTaskRoute(): Promise<TaskRouteStatus> {
 
 export async function fetchTaskRouteStatus(): Promise<TaskRouteStatus> {
   return handleJson<TaskRouteStatus>(await fetch("/api/tasks/routes/status"));
+}
+
+export async function debugSetLight(payload: SetLightRequestPayload): Promise<SetLightDebugResponse> {
+  const response = await fetch("/api/debug/light/set", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  return handleJson<SetLightDebugResponse>(response);
+}
+
+export async function debugGetLightStatus(deviceId: string): Promise<LightStatusPayload> {
+  return handleJson<LightStatusPayload>(await fetch(`/api/debug/light/status?device_id=${encodeURIComponent(deviceId)}`));
 }

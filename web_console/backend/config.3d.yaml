@@ -1,3 +1,4 @@
+
 ros:
   map_topic: /map
   pointcloud_topic: /jt128/front/points

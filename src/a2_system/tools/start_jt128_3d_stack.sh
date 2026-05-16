@@ -27,7 +27,7 @@ usage() {
   cat <<EOF
 Usage:
   $(basename "$0") --mode mapping [--lidar-iface net1] [--no-web]
-  $(basename "$0") --mode navigation --map-id MAP_ID [--lidar-iface net1] [--sdk-iface eth0] [--enable-motion] [--live-motion]
+  $(basename "$0") --mode navigation --map-id MAP_ID [--lidar-iface net1] [--sdk-iface eth0] [--localization-mode ndt|odom_only] [--collision-profile strict|live-validation] [--enable-motion] [--live-motion]
 
 Starts the 3D-first JT128 stack:
   mapping:
@@ -46,6 +46,7 @@ Starts the 3D-first JT128 stack:
 Safety defaults:
   - --enable-motion starts a2_control_bridge.
   - without --enable-motion, navigation remains a dry-run/control-disabled stack.
+
 EOF
 }
 
@@ -101,6 +102,7 @@ while [[ $# -gt 0 ]]; do
       ENABLE_NAV2_3D=true
       shift
       ;;
+
     --no-nav2-3d)
       ENABLE_NAV2_3D=false
       shift
@@ -109,6 +111,7 @@ while [[ $# -gt 0 ]]; do
       NAV2_3D_MAP="$2"
       shift 2
       ;;
+
     --no-robot-state)
       START_ROBOT_STATE=false
       shift
@@ -128,6 +131,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ "$MODE" == "mapping" || "$MODE" == "navigation" ]] || die "mode must be mapping or navigation"
+[[ "$LOCALIZATION_MODE" == "ndt" || "$LOCALIZATION_MODE" == "odom_only" ]] || die "localization mode must be ndt or odom_only"
+[[ "$COLLISION_MONITOR_PROFILE" == "strict" || "$COLLISION_MONITOR_PROFILE" == "live-validation" ]] || die "collision profile must be strict or live-validation"
 if [[ "$MODE" == "navigation" && -z "$MAP_ID" ]]; then
   die "--map-id is required for navigation mode"
 fi
@@ -142,6 +147,7 @@ if [[ "$MODE" == "navigation" && "$ENABLE_NAV2_3D" == "true" && -z "$NAV2_3D_MAP
     die "Nav2 3D requires a projected map YAML. Missing: ${candidate_map}. Use --nav2-map or --no-nav2-3d."
   fi
 fi
+
 
 mkdir -p "$LOG_DIR"
 

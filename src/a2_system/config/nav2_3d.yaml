@@ -114,7 +114,7 @@ behavior_server:
     robot_base_frame: base_link
     transform_tolerance: 2.0
     simulate_ahead_time: 2.0
-    max_rotational_vel: 0.55
+    max_rotational_vel: 0.50
     min_rotational_vel: 0.10
     rotational_acc_lim: 1.2
 
@@ -288,6 +288,7 @@ local_costmap:
           obstacle_max_range: 8.0
           raytrace_max_range: 10.0
           raytrace_min_range: 0.0
+
           obstacle_min_range: 0.85
         traversability_cloud:
           topic: /a2/traversability/obstacle_points
@@ -297,6 +298,7 @@ local_costmap:
           marking: true
           clearing: false
           obstacle_max_range: 6.0
+
           obstacle_min_range: 0.85
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"

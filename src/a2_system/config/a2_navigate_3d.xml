@@ -5,8 +5,7 @@
     1. Lateral strafe  (DriveOnHeading side-step — A2 is omnidirectional)
     2. Clear costmaps   (allow replanning around obstacles)
     3. Spin             (rotate to find clear path)
-    4. BackUp           (retreat)
-    5. Wait             (pause and retry)
+    4. Wait             (pause and retry)
 
   The outer RecoveryNode retries the full navigation pipeline up to 6 times.
   When the path follower detects a failure (stuck, invalid path, etc.), the
@@ -40,7 +39,6 @@
             <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap"/>
           </Sequence>
           <Spin spin_dist="1.57"/>
-          <BackUp backup_dist="0.30" backup_speed="0.05"/>
           <Wait wait_duration="5"/>
         </RoundRobin>
       </ReactiveFallback>

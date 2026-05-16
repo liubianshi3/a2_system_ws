@@ -170,6 +170,7 @@ class A2NdtAdapter(Node):
         self._received_first_odom = False
         self.last_score = -1.0
         self.last_score_stamp = None
+
         self.last_odom_stamp = None
         self.last_iteration_num = None
         self.cached_map = None
@@ -231,6 +232,8 @@ class A2NdtAdapter(Node):
             self.publish_ndt_initial_guess_from_odom(msg)
 
     def on_ndt_pose(self, msg: PoseWithCovarianceStamped):
+        pose_receive_time = self.get_clock().now()
+        self.last_pose_stamp = pose_receive_time
         if self.last_odom_to_base is None:
             self.publish_status(False, "rejected", "ndt_pose_without_odom")
             self.get_logger().warn("NDT pose rejected: no odom available", throttle_duration_sec=2.0)
@@ -252,12 +255,14 @@ class A2NdtAdapter(Node):
                 f"NDT pose rejected: score {self.last_score:.3f} < threshold {threshold:.1f}",
                 throttle_duration_sec=0.5,
             )
+
             return
 
         map_to_base = pose_to_matrix(msg.pose.pose.position, msg.pose.pose.orientation)
         candidate_map_to_odom = map_to_base @ np.linalg.inv(self.last_odom_to_base)
         if (
             self.has_seed
+
             and not self.awaiting_first_ndt_fix
             and not self.correction_step_is_bounded(candidate_map_to_odom)
         ):
@@ -525,9 +530,9 @@ class A2NdtAdapter(Node):
         return response
 
     def odom_is_fresh(self) -> bool:
-        if self.last_odom_stamp is None:
+        if self.last_odom_receive_time is None:
             return False
-        age = (self.get_clock().now() - self.last_odom_stamp).nanoseconds * 1e-9
+        age = self.age_sec(self.last_odom_receive_time)
         return age <= float(self.get_parameter('odom_timeout_sec').value)
 
     def score_is_fresh(self) -> bool:
@@ -535,6 +540,29 @@ class A2NdtAdapter(Node):
             return False
         age = (self.get_clock().now() - self.last_score_stamp).nanoseconds * 1e-9
         return age <= float(self.get_parameter('score_timeout_sec').value)
+
+    def age_sec(self, stamp) -> float:
+        if stamp is None:
+            return -1.0
+        return (self.get_clock().now() - stamp).nanoseconds * 1e-9
+
+    def odom_stamp_skew_sec(self) -> float:
+        if self.last_odom_receive_time is None or self.last_odom_msg_stamp is None:
+            return 0.0
+        return (self.last_odom_receive_time - self.last_odom_msg_stamp).nanoseconds * 1e-9
+
+    def score_pose_delta_sec(self, pose_receive_time=None) -> float:
+        if self.last_score_stamp is None:
+            return float("inf")
+        pose_stamp = pose_receive_time or self.last_pose_stamp
+        if pose_stamp is None:
+            return float("inf")
+        return abs((pose_stamp - self.last_score_stamp).nanoseconds * 1e-9)
+
+    def score_pose_delta_is_bounded(self, pose_receive_time=None) -> bool:
+        return self.score_pose_delta_sec(pose_receive_time) <= float(
+            self.get_parameter('max_score_pose_delta_sec').value
+        )
 
     def current_score_is_acceptable(self) -> bool:
         return score_is_acceptable(
@@ -550,6 +578,15 @@ class A2NdtAdapter(Node):
         rotation = math.acos(max(-1.0, min(1.0, rotation_trace)))
         max_translation = float(self.get_parameter('max_map_to_odom_translation_step').value)
         max_rotation = math.radians(float(self.get_parameter('max_map_to_odom_rotation_step_deg').value))
+        return translation <= max_translation and rotation <= max_rotation
+
+    def first_fix_step_is_bounded(self, candidate_map_to_odom: np.ndarray) -> bool:
+        delta = candidate_map_to_odom @ np.linalg.inv(self.map_to_odom)
+        translation = float(np.linalg.norm(delta[:3, 3]))
+        rotation_trace = (float(np.trace(delta[:3, :3])) - 1.0) * 0.5
+        rotation = math.acos(max(-1.0, min(1.0, rotation_trace)))
+        max_translation = float(self.get_parameter('first_fix_max_translation_m').value)
+        max_rotation = float(self.get_parameter('first_fix_max_rotation_rad').value)
         return translation <= max_translation and rotation <= max_rotation
 
     def publish_periodic_status(self):
@@ -580,6 +617,11 @@ class A2NdtAdapter(Node):
             f"matcher=autoware_ndt",
             f"score={score:.3f}",
             f"score_threshold={float(self.get_parameter('score_threshold').value):.3f}",
+            f"last_score_age={self.age_sec(self.last_score_stamp):.3f}",
+            f"last_pose_age={self.age_sec(self.last_pose_stamp):.3f}",
+            f"last_score_pose_delta_sec={self.score_pose_delta_sec():.3f}",
+            f"odom_receive_age={self.age_sec(self.last_odom_receive_time):.3f}",
+            f"odom_stamp_skew_sec={self.odom_stamp_skew_sec():.3f}",
             f"iteration_num={self.last_iteration_num if self.last_iteration_num is not None else -1}",
             f"map_ready={str(bool(self.cached_map_points.size > 0 and not self.map_parse_error)).lower()}",
             f"map_points={int(self.cached_map_points.shape[0])}",

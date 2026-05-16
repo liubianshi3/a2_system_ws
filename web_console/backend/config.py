@@ -18,6 +18,13 @@ class ServerConfig:
 
 
 @dataclass
+class GrpcConfig:
+    enabled: bool = False
+    host: str = "0.0.0.0"
+    port: int = 50051
+
+
+@dataclass
 class RosTopicConfig:
     map_topic: str = "/map"
     pointcloud_topic: str = "/jt128/front/points"
@@ -37,6 +44,7 @@ class RosTopicConfig:
     localization_ok_topic: str = "/a2/localization_ok"
     localization_status_topic: str = "/a2/localization/status"
     relocalization_status_topic: str = "/a2/relocalization/status"
+    safety_status_topic: str = "/a2/safety/status"
     map_manager_status_topic: str = "/a2/map_manager/status"
     map_manager_active_map_topic: str = "/a2/map_manager/active_map"
     task_manager_status_topic: str = "/a2/task_manager/status"
@@ -47,6 +55,7 @@ class RosTopicConfig:
     camera_compressed_topic: str = "/camera/image_raw/compressed"
     battery_topic: str = "/a2/battery"
     scan_mission_status_topic: str = "/a2/scan_mission/status"
+    light_command_topic: str = "/a2/light/command"
 
 
 @dataclass
@@ -91,6 +100,7 @@ class NavigationConfig:
 @dataclass
 class HealthConfig:
     pose_stale_sec: float = 2.0
+    battery_stale_sec: float = 5.0
     health_broadcast_hz: float = 1.0
 
 
@@ -117,6 +127,7 @@ class StackConfig:
 @dataclass
 class AppConfig:
     server: ServerConfig = field(default_factory=ServerConfig)
+    grpc: GrpcConfig = field(default_factory=GrpcConfig)
     ros: RosTopicConfig = field(default_factory=RosTopicConfig)
     camera: CameraConfig = field(default_factory=CameraConfig)
     navigation: NavigationConfig = field(default_factory=NavigationConfig)
