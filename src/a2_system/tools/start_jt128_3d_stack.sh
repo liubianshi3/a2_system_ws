@@ -10,6 +10,8 @@ MAP_ID=""
 START_WEB=1
 ENABLE_MOTION=false
 DRY_RUN=true
+ENABLE_NAV2_3D=true
+NAV2_3D_MAP=""
 START_ROBOT_STATE=true
 START_SAFETY=true
 LOG_DIR="${WORKSPACE}/runtime/logs"
@@ -17,8 +19,9 @@ NAV_STATE_FILE="${WORKSPACE}/runtime/jt128_3d_navigation_state.yaml"
 WEB_SERVICE="${A2_WEB_SERVICE:-a2-web-console.service}"
 WEB_URL="${A2_WEB_URL:-http://127.0.0.1:8080}"
 WEB_BACKEND_PYTHON="${WORKSPACE}/web_console/.venv/bin/python"
-WEB_BACKEND_CONFIG="${WORKSPACE}/web_console/backend/config.example.yaml"
+WEB_BACKEND_CONFIG="${WORKSPACE}/web_console/backend/config.3d.yaml"
 WEB_FALLBACK_LOG="${LOG_DIR}/web_console_fallback.log"
+FAST_DDS_TRANSPORTS="${A2_FASTDDS_BUILTIN_TRANSPORTS:-${FASTDDS_BUILTIN_TRANSPORTS:-UDPv4}}"
 
 usage() {
   cat <<EOF
@@ -35,14 +38,14 @@ Starts the 3D-first JT128 stack:
   navigation:
     mapping stack above stays live
     loads pointcloud_map_3d.pcd
-    pcd_relocalizer_3d -> /a2/relocalization/pose + map->odom
-    goal_bridge -> /a2/nav3/goal_pose
-    pose_goal_controller_3d -> /cmd_vel
+    pointcloud_map_loader -> /a2/map/pointcloud_3d
+    Autoware NDT adapter -> /a2/relocalization/pose + map->odom
+    Nav2 3D global/local navigation -> collision_monitor -> /cmd_vel_safe
     optional a2_control_bridge -> Unitree motion
 
 Safety defaults:
-  - --enable-motion starts a2_control_bridge, but controller remains dry-run.
-  - --live-motion is also required before pose_goal_controller_3d publishes /cmd_vel.
+  - --enable-motion starts a2_control_bridge.
+  - without --enable-motion, navigation remains a dry-run/control-disabled stack.
 EOF
 }
 
@@ -94,6 +97,18 @@ while [[ $# -gt 0 ]]; do
       DRY_RUN=false
       shift
       ;;
+    --enable-nav2-3d)
+      ENABLE_NAV2_3D=true
+      shift
+      ;;
+    --no-nav2-3d)
+      ENABLE_NAV2_3D=false
+      shift
+      ;;
+    --nav2-map)
+      NAV2_3D_MAP="$2"
+      shift 2
+      ;;
     --no-robot-state)
       START_ROBOT_STATE=false
       shift
@@ -119,6 +134,14 @@ fi
 if [[ "$DRY_RUN" == "false" && "$ENABLE_MOTION" != "true" ]]; then
   die "--live-motion requires --enable-motion"
 fi
+if [[ "$MODE" == "navigation" && "$ENABLE_NAV2_3D" == "true" && -z "$NAV2_3D_MAP" ]]; then
+  candidate_map="${WORKSPACE}/runtime/maps/${MAP_ID}/map.yaml"
+  if [[ -f "$candidate_map" ]]; then
+    NAV2_3D_MAP="$candidate_map"
+  else
+    die "Nav2 3D requires a projected map YAML. Missing: ${candidate_map}. Use --nav2-map or --no-nav2-3d."
+  fi
+fi
 
 mkdir -p "$LOG_DIR"
 
@@ -131,32 +154,70 @@ source_ros() {
   set -u
 }
 
+configure_ros_transport() {
+  export FASTDDS_BUILTIN_TRANSPORTS="${FAST_DDS_TRANSPORTS}"
+  log "Using Fast DDS builtin transports: ${FASTDDS_BUILTIN_TRANSPORTS}"
+}
+
+require_a2_system_executable() {
+  local name="$1"
+  local install_path="${WORKSPACE}/install/a2_system/lib/a2_system/${name}"
+  local source_path="${WORKSPACE}/src/a2_system/scripts/${name}"
+  if [[ -x "$install_path" ]]; then
+    return 0
+  fi
+  if [[ -x "$source_path" ]]; then
+    warn "install executable missing for ${name}; launch will fall back to source path ${source_path}"
+    return 0
+  fi
+  die "required a2_system executable is unavailable: ${name} (checked ${install_path} and ${source_path})"
+}
+
 stop_navigation_components() {
   local pattern
-  for pattern in \
-    "jt128_3d_navigation.launch.py" \
-    "pointcloud_guard" \
-    "pointcloud_map_loader" \
-    "pcd_relocalizer_3d" \
-    "localization_gate" \
-    "goal_bridge" \
-    "pose_goal_controller_3d" \
-    "safety_supervisor" \
-    "real_readiness_monitor" \
-    "a2_sdk_bridge_node" \
-    "a2_state_publisher_node" \
-    "a2_control_bridge_node"; do
+  local navigation_patterns=(
+    "jt128_3d_navigation.launch.py"
+    "pointcloud_guard"
+    "pointcloud_map_loader"
+    "pcd_relocalizer_3d"
+    "ndt_scan_matcher"
+    "autoware_ndt_scan_matcher_node"
+    "ndt_adapter"
+    "ndt_health_monitor"
+    "sensor_covariance_injector.py"
+    "body_imu_covariance_injector"
+    "ekf_node"
+    "localization_gate"
+    "goal_bridge"
+    "pose_goal_controller_3d"
+    "ground_segmentation_cpp_node"
+    "traversability_to_obstacle_cloud.py"
+    "collision_monitor"
+    "controller_server"
+    "planner_server"
+    "bt_navigator"
+    "smoother_server"
+    "behavior_server"
+    "waypoint_follower"
+    "velocity_smoother"
+    "lifecycle_manager"
+    "local_costmap"
+    "global_costmap"
+    "map_server"
+    "jt128_navigation_static_tf_manager"
+    "auto_scan_mission.py"
+    "task_manager.py"
+    "safety_supervisor"
+    "real_readiness_monitor"
+    "a2_sdk_bridge_node"
+    "a2_state_publisher_node"
+    "a2_control_bridge_node"
+  )
+  for pattern in "${navigation_patterns[@]}"; do
     pkill -TERM -f "$pattern" >/dev/null 2>&1 || true
   done
   sleep 1
-  for pattern in \
-    "jt128_3d_navigation.launch.py" \
-    "pointcloud_guard" \
-    "pointcloud_map_loader" \
-    "pcd_relocalizer_3d" \
-    "goal_bridge" \
-    "pose_goal_controller_3d" \
-    "a2_control_bridge_node"; do
+  for pattern in "${navigation_patterns[@]}"; do
     pkill -KILL -f "$pattern" >/dev/null 2>&1 || true
   done
 }
@@ -186,7 +247,10 @@ start_web() {
 }
 
 source_ros
+configure_ros_transport
 command -v ros2 >/dev/null 2>&1 || die "ros2 not found after sourcing workspace"
+require_a2_system_executable "traversability_to_obstacle_cloud.py"
+require_a2_system_executable "octomap_mapping_node.py"
 
 log "Starting JT128 DLIO mapping base stack"
 DLIO_MAPPING_SCRIPT="${WORKSPACE}/install/a2_system/share/a2_system/start_jt128_dlio_mapping.sh"
@@ -209,16 +273,19 @@ fi
 
 stop_navigation_components
 NAV_LOG="${LOG_DIR}/jt128_3d_navigation_$(date +%Y%m%d_%H%M%S).log"
-log "Starting JT128 3D navigation components map_id=${MAP_ID} dry_run=${DRY_RUN} enable_motion=${ENABLE_MOTION}"
+log "Starting JT128 3D navigation components map_id=${MAP_ID} dry_run=${DRY_RUN} enable_motion=${ENABLE_MOTION} enable_nav2_3d=${ENABLE_NAV2_3D}"
 setsid bash -lc "
   set -e
   source /opt/ros/humble/setup.bash
   source '${WORKSPACE}/install/setup.bash'
+  export FASTDDS_BUILTIN_TRANSPORTS='${FASTDDS_BUILTIN_TRANSPORTS}'
   ros2 launch a2_bringup jt128_3d_navigation.launch.py \
     map_id:='${MAP_ID}' \
-    start_static_tf:=false \
+    start_static_tf:=true \
     start_robot_state:=${START_ROBOT_STATE} \
     start_safety:=${START_SAFETY} \
+    enable_nav2_3d:=${ENABLE_NAV2_3D} \
+    nav2_3d_map:='${NAV2_3D_MAP}' \
     enable_motion:=${ENABLE_MOTION} \
     dry_run:=${DRY_RUN} \
     sdk_interface:='${SDK_IFACE}' \
@@ -236,6 +303,8 @@ sdk_interface: ${SDK_IFACE}
 control_interface: ${CONTROL_IFACE}
 enable_motion: ${ENABLE_MOTION}
 dry_run: ${DRY_RUN}
+enable_nav2_3d: ${ENABLE_NAV2_3D}
+nav2_3d_map: ${NAV2_3D_MAP}
 started_at: $(date --iso-8601=seconds)
 EOF
 
@@ -248,6 +317,7 @@ fi
 log "Navigation components started pid=${NAV_PID}"
 log "Navigation log: ${NAV_LOG}"
 log "Set initial pose before sending goals:"
-log "  ros2 topic pub --once /initialpose geometry_msgs/msg/PoseWithCovarianceStamped '{header: {frame_id: map}, pose: {pose: {orientation: {w: 1.0}}}}'"
+log "  now=\$(date +%s%N); sec=\${now%?????????}; nsec=\${now: -9}"
+log "  ros2 topic pub --once /initialpose geometry_msgs/msg/PoseWithCovarianceStamped \"{header: {stamp: {sec: \${sec}, nanosec: \${nsec}}, frame_id: map}, pose: {pose: {orientation: {w: 1.0}}}}\""
 log "Send a short goal through Web or:"
 log "  ros2 topic pub --once /a2/exploration/goal geometry_msgs/msg/PoseStamped '{header: {frame_id: map}, pose: {position: {x: 0.2, y: 0.0, z: 0.0}, orientation: {w: 1.0}}}'"

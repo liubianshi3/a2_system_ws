@@ -9,6 +9,7 @@ from a2_ndt_adapter.ndt_adapter_node import (
     quaternion_to_matrix,
     score_is_acceptable,
     select_points_for_area,
+    should_publish_periodic_guess,
 )
 
 
@@ -62,3 +63,11 @@ def test_select_points_for_area_filters_and_downsamples():
 def test_map_cell_id_is_stable_and_safe_for_cached_ids():
     cell_id = make_map_cell_id("a2_map_cell", -1.25, 3.5, 40.0)
     assert cell_id == "a2_map_cell_m1p2_3p5_r40p0"
+
+
+def test_periodic_initial_guess_publish_gate():
+    assert should_publish_periodic_guess(None, 0.1)
+    assert should_publish_periodic_guess(0.05, 0.1, force=True)
+    assert should_publish_periodic_guess(0.11, 0.1)
+    assert not should_publish_periodic_guess(0.05, 0.1)
+    assert should_publish_periodic_guess(0.0, 0.0)
