@@ -43,7 +43,7 @@ def test_default_config_exposes_camera_topics():
     assert config.ros.pose_goal_status_topic == "/a2/nav2/status"
     assert config.ros.pointcloud_primary_stale_sec > 0.0
     assert config.ros.pointcloud_preview_max_points >= 20000
-    assert config.stack.start_script.endswith("start_real_stack.sh")
+    assert config.stack.start_script.endswith("start_jt128_3d_stack.sh")
 
 
 def test_navigation_contract_uses_nav2_by_default():
@@ -56,7 +56,14 @@ def test_navigation_contract_uses_nav2_by_default():
     assert "planner server" in labels
     assert "controller server" in labels
     assert "bt navigator" in labels
-    assert ("ndt_adapter" in patterns or "localization_gate" in patterns)  # 3D-first, legacy "amcl" removed
+    # expand tuple patterns for membership checks
+    flat_patterns = set()
+    for p in patterns:
+        if isinstance(p, tuple):
+            flat_patterns.update(p)
+        else:
+            flat_patterns.add(p)
+    assert ("ndt_adapter" in flat_patterns or "localization_gate" in flat_patterns)  # 3D-first, legacy "amcl" removed
     assert "planner_server" in patterns
     assert "controller_server" in patterns
     assert "bt_navigator" in patterns

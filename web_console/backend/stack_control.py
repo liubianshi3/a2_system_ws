@@ -118,16 +118,16 @@ STACK_CLEANUP_PATTERNS = [
     "jt128_dlio_map",
     "dlio_odom_node",
     "dlio_map_node",
-    # Legacy 2D nodes removed from primary validation:
-    # "pointcloud_to_laserscan",
-    # "slam_toolbox",
+    # Legacy 2D nodes — kept in cleanup for process kill safety, not in primary validation:
+    "pointcloud_to_laserscan",
+    "slam_toolbox",
     "native_map_relay",
     "slam_orchestrator",
     "pcd_relocalizer_3d",
     "localization_gate",
     "exploration_manager",
     "manual_localization_publisher",
-    # "amcl",  # legacy 2D — removed from primary validation
+    "amcl",  # legacy 2D — kept in cleanup, not in primary validation
     "goal_bridge",
     "pose_goal_controller_3d",
     "occupancy_mapper",

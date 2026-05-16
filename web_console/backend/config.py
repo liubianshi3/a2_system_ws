@@ -35,7 +35,7 @@ class RosTopicConfig:
     task_manager_service: str = "/a2/task_manager/command"
     localization_pose_topic: str = "/a2/relocalization/pose"  # legacy /amcl_pose → 3D NDT
     localization_pose_msg_type: str = "geometry_msgs/msg/PoseWithCovarianceStamped"
-    odom_topic: str = "/odom"
+    odom_topic: str = "/jt128/dlio/odom"  # legacy /odom → 3D DLIO
     tf_topic: str = "/tf"
     tf_static_topic: str = "/tf_static"
     real_report_topic: str = "/a2/real/report"
@@ -119,8 +119,8 @@ class StackConfig:
     workspace: str = "~/a2_system_ws"
     network_interface: str = "net1"
     map_root: str = "~/a2_system_ws/runtime/maps"
-    start_script: str = "~/a2_system_ws/src/a2_system/tools/start_real_stack.sh"
-    stop_script: str = "~/a2_system_ws/src/a2_system/tools/stop_stack.sh"
+    start_script: str = "~/a2_system_ws/src/a2_system/tools/start_jt128_3d_stack.sh"
+    stop_script: str = "~/a2_system_ws/src/a2_system/tools/stop_jt128_stack.sh"
     command_timeout_sec: float = 15.0
 
 
