@@ -394,14 +394,14 @@ export function PointCloudCanvas3D({
 
   useEffect(() => {
     const current = sceneRef.current;
-    updateMarker(current?.robotMarker ?? null, pose ? markerPositionFromRos(current, { x: pose.x ?? 0, y: pose.y ?? 0, z: 0 }) : null, pose?.yaw ?? 0);
+    updateMarker(current?.robotMarker ?? null, pose ? markerPositionFromRos(current, { x: pose.x ?? 0, y: pose.y ?? 0, z: 0 }, false) : null, pose?.yaw ?? 0);
   }, [pose]);
 
   useEffect(() => {
     const current = sceneRef.current;
     updateMarker(
       current?.selectedGoalMarker ?? null,
-      selectedGoal ? markerPositionFromRos(current, { x: selectedGoal.x, y: selectedGoal.y, z: 0 }) : null,
+      selectedGoal ? markerPositionFromRos(current, { x: selectedGoal.x, y: selectedGoal.y, z: 0 }, true) : null,
       selectedGoal?.yaw ?? 0,
     );
   }, [selectedGoal]);
@@ -410,7 +410,7 @@ export function PointCloudCanvas3D({
     const current = sceneRef.current;
     updateMarker(
       current?.activeGoalMarker ?? null,
-      activeGoal ? markerPositionFromRos(current, { x: activeGoal.x, y: activeGoal.y, z: 0 }) : null,
+      activeGoal ? markerPositionFromRos(current, { x: activeGoal.x, y: activeGoal.y, z: 0 }, true) : null,
       activeGoal?.yaw ?? 0,
     );
   }, [activeGoal]);
@@ -577,9 +577,9 @@ function updateMarker(group: THREE.Group | null, position: THREE.Vector3 | null,
   group.rotation.set(0, -yaw, 0);
 }
 
-function markerPositionFromRos(context: SceneContext | null, point: { x: number; y: number; z: number }) {
+function markerPositionFromRos(context: SceneContext | null, point: { x: number; y: number; z: number }, snapToSurface: boolean) {
   const position = rosToThree(point);
-  const surfaceY = context ? groundSurfaceY(context, position.x, position.z) : null;
+  const surfaceY = snapToSurface && context ? groundSurfaceY(context, position.x, position.z) : null;
   if (surfaceY !== null) {
     position.y = surfaceY;
   }

@@ -233,6 +233,14 @@ class ManualVelocityResponse(BaseModel):
     message: str
 
 
+class ManualControlSnapshot(BaseModel):
+    enabled: bool = False
+    cmd_topic: str = ""
+    max_linear_x: float = 0.0
+    max_linear_y: float = 0.0
+    max_angular_z: float = 0.0
+
+
 class GaitControlCommand(BaseModel):
     gait_type: int | None = Field(default=None, ge=0, le=7)
     speed_level: int | None = Field(default=None, ge=0, le=3)
@@ -409,6 +417,7 @@ class DashboardSnapshot(BaseModel):
     pose: RobotPose = Field(default_factory=RobotPose)
     status: RobotStatus = Field(default_factory=RobotStatus)
     control_state: ControlStateSnapshot = Field(default_factory=ControlStateSnapshot)
+    manual_control: ManualControlSnapshot = Field(default_factory=ManualControlSnapshot)
     navigation: NavigationTaskState = Field(default_factory=NavigationTaskState)
     camera: CameraFrame = Field(default_factory=CameraFrame)
     health: SystemHealth = Field(default_factory=SystemHealth)

@@ -91,6 +91,7 @@ from .models import (
     InitialPoseRequest,
     GaitControlCommand,
     GaitControlResponse,
+    ManualControlSnapshot,
     ManualVelocityCommand,
     ManualVelocityResponse,
     MotionCommandResult,
@@ -253,6 +254,7 @@ class RosBridgeNode(Node):
 
         self.map_snapshot = MapSnapshot()
         self.pointcloud_snapshot = PointCloudSnapshot()
+        self.pointcloud_snapshots_by_topic: dict[str, PointCloudSnapshot] = {}
         self.pose = RobotPose()
         self.status = RobotStatus(
             planner_type="SmacPlannerHybrid",
@@ -269,6 +271,7 @@ class RosBridgeNode(Node):
         self._last_primary_pointcloud_monotonic = 0.0
         self._last_fallback_pointcloud_monotonic = 0.0
         self._last_pose_monotonic = 0.0
+        self._last_websocket_publish_monotonic: dict[str, float] = {}
         self._last_localization_pose_stamp: str | None = None
         self._last_odom_pose: RobotPose | None = None
         self._localization_anchor_pose: RobotPose | None = None
@@ -392,19 +395,28 @@ class RosBridgeNode(Node):
         )
         self.create_subscription(OccupancyGrid, ros.map_topic, self._on_map, latched_qos)
         self.create_subscription(OccupancyGrid, ros.map_topic, self._on_map, 10)
-        self.create_subscription(
-            PointCloud2,
-            ros.pointcloud_topic,
-            lambda msg: self._on_pointcloud(msg, ros.pointcloud_topic, primary=True),
-            10,
-        )
-        if ros.pointcloud_fallback_topic and ros.pointcloud_fallback_topic != ros.pointcloud_topic:
+        pointcloud_topics: set[str] = set()
+
+        def subscribe_pointcloud(topic: str, *, primary: bool) -> None:
+            topic = str(topic or "").strip()
+            if not topic or topic in pointcloud_topics:
+                return
+            pointcloud_topics.add(topic)
             self.create_subscription(
                 PointCloud2,
-                ros.pointcloud_fallback_topic,
-                lambda msg: self._on_pointcloud(msg, ros.pointcloud_fallback_topic, primary=False),
+                topic,
+                lambda msg, subscribed_topic=topic, is_primary=primary: self._on_pointcloud(
+                    msg,
+                    subscribed_topic,
+                    primary=is_primary,
+                ),
                 10,
             )
+
+        subscribe_pointcloud(ros.pointcloud_topic, primary=True)
+        subscribe_pointcloud(ros.pointcloud_fallback_topic, primary=False)
+        for topic in ros.pointcloud_map_topics or []:
+            subscribe_pointcloud(topic, primary=False)
         if ros.localization_pose_msg_type == "nav_msgs/msg/Odometry":
             self.create_subscription(Odometry, ros.localization_pose_topic, self._on_localization_odom, 20)
         else:
@@ -465,6 +477,44 @@ class RosBridgeNode(Node):
 
     def _publish(self, event_type: str, payload: Any) -> None:
         self.ws_manager.broadcast_threadsafe({"type": event_type, "payload": payload})
+
+    def _publish_rate_limited(
+        self,
+        event_type: str,
+        payload: Any,
+        max_hz: float,
+        *,
+        key: str | None = None,
+        now: float | None = None,
+    ) -> bool:
+        if not math.isfinite(max_hz) or max_hz <= 0.0:
+            return False
+        current = time.monotonic() if now is None else now
+        bucket = key or event_type
+        last = self._last_websocket_publish_monotonic.get(bucket, 0.0)
+        if current - last < 1.0 / max_hz:
+            return False
+        self._last_websocket_publish_monotonic[bucket] = current
+        self._publish(event_type, payload)
+        return True
+
+    def _publish_status(self, *, now: float | None = None) -> bool:
+        return self._publish_rate_limited(
+            "status",
+            dump_model(self.status),
+            float(self.config.health.websocket_status_hz),
+            key="status",
+            now=now,
+        )
+
+    def _publish_battery(self, *, now: float | None = None) -> bool:
+        return self._publish_rate_limited(
+            "battery",
+            dump_model(self.battery),
+            float(self.config.health.websocket_battery_hz),
+            key="battery",
+            now=now,
+        )
 
     def _camera_throttle_ready(self) -> bool:
         max_hz = max(0.1, float(self.config.camera.max_broadcast_hz))
@@ -827,6 +877,7 @@ class RosBridgeNode(Node):
         now = time.monotonic()
         should_publish = False
         with self._lock:
+            self.pointcloud_snapshots_by_topic[topic] = pointcloud_snapshot
             if primary:
                 self._last_primary_pointcloud_monotonic = now
                 self.pointcloud_snapshot = pointcloud_snapshot
@@ -856,6 +907,23 @@ class RosBridgeNode(Node):
     def _publish_current_pointcloud_snapshot(self) -> None:
         self._publish("pointcloud", dump_model(self.pointcloud_snapshot))
         self._publish("health", self.get_health_dict())
+
+    def get_navigation_pointcloud_snapshot(self) -> PointCloudSnapshot:
+        topics = [
+            str(topic or "").strip()
+            for topic in self.config.ros.pointcloud_map_topics or []
+            if str(topic or "").strip()
+        ]
+        fallback_topic = str(self.config.ros.pointcloud_fallback_topic or "").strip()
+        if fallback_topic and fallback_topic not in topics:
+            topics.append(fallback_topic)
+
+        with self._lock:
+            for topic in topics:
+                snapshot = self.pointcloud_snapshots_by_topic.get(topic)
+                if snapshot is not None and snapshot.loaded:
+                    return deep_copy_model(snapshot)
+            return deep_copy_model(self.pointcloud_snapshot)
 
     def _on_localization_pose(self, msg: PoseWithCovarianceStamped) -> None:
         pose = msg.pose.pose
@@ -975,10 +1043,15 @@ class RosBridgeNode(Node):
                 self.health.pose_received = True
                 self.health.last_pose_update = fallback_pose.stamp
                 self._last_pose_monotonic = now
-        self._publish("status", dump_model(self.status))
+        self._publish_status(now=now)
         if fallback_pose is not None:
-            self._publish("pose", dump_model(fallback_pose))
-            self._publish("health", self.get_health_dict())
+            self._publish_rate_limited(
+                "pose",
+                dump_model(fallback_pose),
+                float(self.config.health.websocket_pose_hz),
+                key="odom_pose",
+                now=now,
+            )
 
     def _on_tf(self, msg: TFMessage) -> None:
         if not msg.transforms:
@@ -992,27 +1065,27 @@ class RosBridgeNode(Node):
         with self._lock:
             self.status.real_report = parsed
             self.status.system_ready = parsed.ready
-        self._publish("status", dump_model(self.status))
+        self._publish_status()
 
     def _on_lidar_status(self, msg: String) -> None:
         with self._lock:
             self.status.lidar_status = self._status_from_string(msg.data)
-        self._publish("status", dump_model(self.status))
+        self._publish_status()
 
     def _on_camera_status(self, msg: String) -> None:
         with self._lock:
             self.status.camera_status = self._status_from_string(msg.data)
-        self._publish("status", dump_model(self.status))
+        self._publish_status()
 
     def _on_localization_ok(self, msg: Bool) -> None:
         with self._lock:
             self.status.localization_ok = msg.data
-        self._publish("status", dump_model(self.status))
+        self._publish_status()
 
     def _on_localization_status(self, msg: String) -> None:
         with self._lock:
             self.status.localization_status = self._status_from_string(msg.data)
-        self._publish("status", dump_model(self.status))
+        self._publish_status()
 
     def _on_relocalization_status(self, msg: String) -> None:
         """Parse NDT score from relocalization status string.
@@ -1034,27 +1107,27 @@ class RosBridgeNode(Node):
             self.status.relocalization_status = self._status_from_string(msg.data)
             self.status.ndt_score = score_val
             self.status.ndt_healthy = healthy_val
-        self._publish("status", dump_model(self.status))
+        self._publish_status()
 
     def _on_safety_status(self, msg: String) -> None:
         with self._lock:
             self.status.safety_status = self._status_from_string(msg.data)
-        self._publish("status", dump_model(self.status))
+        self._publish_status()
 
     def _on_map_manager_status(self, msg: String) -> None:
         with self._lock:
             self.status.map_manager_status = self._status_from_string(msg.data)
-        self._publish("status", dump_model(self.status))
+        self._publish_status()
 
     def _on_active_map(self, msg: String) -> None:
         with self._lock:
             self.status.active_map = msg.data or None
-        self._publish("status", dump_model(self.status))
+        self._publish_status()
 
     def _on_task_manager_status(self, msg: String) -> None:
         with self._lock:
             self.status.task_manager_status = self._status_from_string(msg.data)
-        self._publish("status", dump_model(self.status))
+        self._publish_status()
 
     def _on_pose_goal_status(self, msg: String) -> None:
         status = self._status_from_string(msg.data)
@@ -1135,12 +1208,12 @@ class RosBridgeNode(Node):
     def _on_sdk_status(self, msg: String) -> None:
         with self._lock:
             self.status.sdk_status = self._status_from_string(msg.data)
-        self._publish("status", dump_model(self.status))
+        self._publish_status()
 
     def _on_control_status(self, msg: String) -> None:
         with self._lock:
             self.status.control_status = self._status_from_string(msg.data)
-        self._publish("status", dump_model(self.status))
+        self._publish_status()
 
     def _on_control_state(self, msg: ControlState) -> None:
         stamp = now_iso()
@@ -1189,7 +1262,7 @@ class RosBridgeNode(Node):
         )
         with self._lock:
             self.status.raw_state = raw_state
-        self._publish("status", dump_model(self.status))
+        self._publish_status()
 
     def _on_battery(self, msg: BatteryState) -> None:
         stamp = now_iso()
@@ -1232,7 +1305,7 @@ class RosBridgeNode(Node):
                 self.get_logger().warning(
                     f"battery update incomplete: available={str(available).lower()} percentage={str(pct)} voltage={str(voltage)} charging={str(charging)} raw_percentage={str(getattr(msg, 'percentage', None))} raw_voltage={str(getattr(msg, 'voltage', None))} status={str(int(getattr(msg, 'power_supply_status', 0) or 0))} topic={str(self.config.ros.battery_topic)}"
                 )
-        self._publish("battery", dump_model(self.battery))
+        self._publish_battery()
 
     def _on_scan_mission_status(self, msg: String) -> None:
         """Parse recovery_* fields from scan mission status."""
@@ -1446,12 +1519,20 @@ class RosBridgeNode(Node):
             if health.ros_thread_alive:
                 battery_age = time.monotonic() - self._last_battery_monotonic if self._last_battery_monotonic > 0.0 else math.inf
                 battery.stale = battery_age > float(self.config.health.battery_stale_sec)
+            manual_control = ManualControlSnapshot(
+                enabled=bool(self.config.manual_control.enabled),
+                cmd_topic=str(self.config.manual_control.cmd_topic),
+                max_linear_x=float(self.config.manual_control.max_linear_x),
+                max_linear_y=float(self.config.manual_control.max_linear_y),
+                max_angular_z=float(self.config.manual_control.max_angular_z),
+            )
             return DashboardSnapshot(
                 map=deep_copy_model(self.map_snapshot),
                 pointcloud=deep_copy_model(self.pointcloud_snapshot),
                 pose=pose,
                 status=status,
                 control_state=deep_copy_model(self.control_state),
+                manual_control=manual_control,
                 navigation=navigation,
                 camera=deep_copy_model(self.camera),
                 health=health,

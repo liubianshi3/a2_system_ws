@@ -216,6 +216,158 @@ class StackController:
             raise StackControlError(detail or f"命令失败: {' '.join(command)}")
         return result
 
+    def ensure_manual_control_standby(self) -> dict[str, Any]:
+        sdk_iface = self._standby_sdk_interface()
+        control_iface = self._standby_control_interface()
+        records = self._process_records()
+        mismatched = self._manual_control_standby_mismatches(records, sdk_iface, control_iface)
+        if mismatched:
+            self._signal_pids({proc.pid for proc in mismatched}, signal.SIGTERM)
+            time.sleep(1.0)
+            records = self._process_records()
+        started: list[str] = []
+        if not any("a2_sdk_bridge_node" in proc.args for proc in records):
+            self._start_standby_sdk_bridge()
+            started.append("sdk")
+        if not any("a2_control_bridge_node" in proc.args for proc in records):
+            self._start_standby_control_bridge()
+            started.append("control")
+        self._wait_for_manual_control_standby()
+        return {
+            "ok": True,
+            "started": started,
+            "message": "手动控制 standby bridge 已就绪" if started else "手动控制 standby bridge 已在运行",
+        }
+
+    def _standby_sdk_interface(self) -> str:
+        return os.environ.get("A2_SDK_INTERFACE") or self.config.stack.network_interface or "net1"
+
+    def _standby_control_interface(self) -> str:
+        return (
+            os.environ.get("A2_CONTROL_INTERFACE")
+            or os.environ.get("A2_SDK_INTERFACE")
+            or self.config.stack.network_interface
+            or "net1"
+        )
+
+    def _manual_control_standby_mismatches(
+        self,
+        records: list[ProcessInfo],
+        sdk_iface: str,
+        control_iface: str,
+    ) -> list[ProcessInfo]:
+        mismatched: list[ProcessInfo] = []
+        for proc in records:
+            if "a2_sdk_bridge_node" in proc.args and f"network_interface:={sdk_iface}" not in proc.args:
+                mismatched.append(proc)
+            elif "a2_control_bridge_node" in proc.args and f"network_interface:={control_iface}" not in proc.args:
+                mismatched.append(proc)
+        return mismatched
+
+    def _start_standby_sdk_bridge(self) -> None:
+        sdk_iface = self._standby_sdk_interface()
+        self._start_standby_ros_process(
+            label="start_standby_sdk_bridge",
+            log_name="a2_sdk_bridge_standby.log",
+            body=[
+                "exec ros2 run a2_sdk_bridge a2_sdk_bridge_node",
+                "--ros-args",
+                "-p use_mock:=false",
+                "-p auto_detect_interface:=false",
+                "-p allow_loopback:=false",
+                f"-p network_interface:={shlex.quote(sdk_iface)}",
+                f"-p state_topic:={shlex.quote(os.environ.get('A2_SDK_STATE_TOPIC', '/a2/raw_state'))}",
+                f"-p sport_state_topic:={shlex.quote(os.environ.get('A2_SDK_SPORT_STATE_TOPIC', 'rt/lf/sportmodestate'))}",
+                f"-p timer_hz:={shlex.quote(os.environ.get('A2_SDK_TIMER_HZ', '50.0'))}",
+                f"-p stale_timeout_sec:={shlex.quote(os.environ.get('A2_SDK_STALE_TIMEOUT_SEC', '0.5'))}",
+            ],
+        )
+
+    def _start_standby_control_bridge(self) -> None:
+        params_file = self.workspace / "install" / "a2_system" / "share" / "a2_system" / "config" / "motion_limits.yaml"
+        if not params_file.exists():
+            params_file = self.workspace / "src" / "a2_system" / "config" / "motion_limits.yaml"
+        if not params_file.exists():
+            raise StackControlError("手动控制 standby 拉起失败: motion_limits.yaml 不存在")
+
+        control_iface = self._standby_control_interface()
+        self._start_standby_ros_process(
+            label="start_standby_control_bridge",
+            log_name="a2_control_bridge_standby.log",
+            body=[
+                "exec ros2 run a2_control_bridge a2_control_bridge_node",
+                "--ros-args",
+                f"--params-file {shlex.quote(str(params_file))}",
+                "-p use_mock:=false",
+                "-p runtime_mode:=real",
+                "-p allow_loopback:=false",
+                f"-p network_interface:={shlex.quote(control_iface)}",
+                f"-p cmd_topic:={shlex.quote(os.environ.get('A2_CONTROL_CMD_TOPIC', '/cmd_vel_safe'))}",
+                f"-p allow_motion_without_map:={self._env_bool_text('A2_CONTROL_ALLOW_WITHOUT_MAP', 'true')}",
+                f"-p allow_motion_without_localization:={self._env_bool_text('A2_CONTROL_ALLOW_WITHOUT_LOCALIZATION', 'true')}",
+                f"-p max_linear_x:={shlex.quote(os.environ.get('A2_CONTROL_MAX_LINEAR_X', '0.35'))}",
+                f"-p max_linear_y:={shlex.quote(os.environ.get('A2_CONTROL_MAX_LINEAR_Y', '0.18'))}",
+                f"-p max_yaw_rate:={shlex.quote(os.environ.get('A2_CONTROL_MAX_YAW_RATE', '0.45'))}",
+                f"-p cmd_timeout_sec:={shlex.quote(os.environ.get('A2_CONTROL_CMD_TIMEOUT_SEC', '0.30'))}",
+            ],
+        )
+
+    def _start_standby_ros_process(self, *, label: str, log_name: str, body: list[str]) -> None:
+        log_dir = self.workspace / "runtime" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / log_name
+        env = os.environ.copy()
+        env["A2_WORKSPACE"] = str(self.workspace)
+        env["RMW_IMPLEMENTATION"] = os.environ.get("A2_UNITREE_RMW_IMPLEMENTATION", "rmw_fastrtps_cpp")
+        ld_preload = os.environ.get("A2_CONTROL_BRIDGE_LD_PRELOAD", "")
+        if not ld_preload:
+            candidate = Path("/opt/unitree_robotics/lib/x86_64/libddsc.so.0")
+            if candidate.exists():
+                ld_preload = str(candidate)
+        if ld_preload:
+            env["LD_PRELOAD"] = ld_preload
+
+        shell = "\n".join(
+            [
+                "set -e",
+                "source /opt/ros/humble/setup.bash",
+                f"source {shlex.quote(str(self.workspace / 'install' / 'setup.bash'))}",
+                f"export A2_WORKSPACE={shlex.quote(str(self.workspace))}",
+                " ".join(body),
+            ]
+        )
+        with log_path.open("ab") as log_handle:
+            try:
+                subprocess.Popen(
+                    ["bash", "-lc", shell],
+                    cwd=str(self.workspace),
+                    env=env,
+                    stdout=log_handle,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
+            except OSError as exc:
+                raise StackControlError(f"{label} 启动失败: {exc}") from exc
+
+    def _wait_for_manual_control_standby(self) -> None:
+        deadline = time.monotonic() + min(max(self.start_timeout, 5.0), 15.0)
+        missing = ["a2_sdk_bridge_node", "a2_control_bridge_node"]
+        while time.monotonic() < deadline:
+            records = self._process_records()
+            missing = [
+                pattern
+                for pattern in ("a2_sdk_bridge_node", "a2_control_bridge_node")
+                if not any(pattern in proc.args for proc in records)
+            ]
+            if not missing:
+                return
+            time.sleep(POLL_INTERVAL_SEC)
+        raise StackControlError(f"手动控制 standby 拉起失败，缺少进程: {', '.join(missing)}")
+
+    def _env_bool_text(self, name: str, default: str) -> str:
+        value = os.environ.get(name, default).strip().lower()
+        return "true" if value in {"1", "true", "t", "yes", "y", "on"} else "false"
+
     def _write_runtime_state(self, **state: Any) -> None:
         self.runtime_state_file.parent.mkdir(parents=True, exist_ok=True)
         existing = self._read_runtime_state()

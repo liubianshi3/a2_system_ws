@@ -52,7 +52,7 @@ def test_convert_imu_to_si_scales_acceleration_and_covariance():
     msg = FakeImu()
     msg.linear_acceleration = FakeVector(x=0.0, y=1.0, z=-0.5)
     msg.linear_acceleration_covariance = [1.0] + [0.0] * 8
-    msg.angular_velocity = FakeVector(x=0.1, y=0.2, z=0.3)
+    msg.angular_velocity = FakeVector(x=180.0, y=90.0, z=-45.0)
     msg.angular_velocity_covariance = [4.0] + [0.0] * 8
 
     converted = converter.convert_imu_to_si(msg, imu_cls=FakeImu)
@@ -61,7 +61,9 @@ def test_convert_imu_to_si_scales_acceleration_and_covariance():
     assert converted.linear_acceleration.y == 9.80665
     assert converted.linear_acceleration.z == -4.903325
     assert abs(converted.linear_acceleration_covariance[0] - 96.1703842225) < 1.0e-9
-    assert converted.angular_velocity.x == 0.1
+    assert converted.angular_velocity.x == 180.0
+    assert converted.angular_velocity.y == 90.0
+    assert converted.angular_velocity.z == -45.0
     assert converted.angular_velocity_covariance[0] == 4.0
 
 

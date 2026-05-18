@@ -13,8 +13,10 @@ grpc:
 
 ros:
   map_topic: /map
-  pointcloud_topic: /jt128/front/points
-  pointcloud_fallback_topic: /jt128/front/points
+  pointcloud_topic: /jt128/dlio/map_points
+  pointcloud_fallback_topic: ""
+  pointcloud_map_topics:
+    - /jt128/dlio/map_points
   pointcloud_primary_stale_sec: 2.0
   pointcloud_preview_max_points: 20000
   task_manager_service: /a2/task_manager/command
@@ -110,6 +112,9 @@ health:
   pose_stale_sec: 2.0
   battery_stale_sec: 5.0
   health_broadcast_hz: 1.0
+  websocket_pose_hz: 10.0
+  websocket_status_hz: 5.0
+  websocket_battery_hz: 2.0
 
 native_slam:
   enabled: true
@@ -120,9 +125,9 @@ native_slam:
   save_root: /home/unitree/dist/maps
 
 stack:
-  workspace: /home/unitree/a2_system_ws
+  workspace: /home/unitree/ws/device-navigation
   network_interface: net1
-  map_root: /home/unitree/a2_system_ws/runtime/maps
-  start_script: /home/unitree/a2_system_ws/src/a2_system/tools/start_jt128_3d_stack.sh
-  stop_script: /home/unitree/a2_system_ws/src/a2_system/tools/stop_jt128_stack.sh
+  map_root: /home/unitree/ws/device-navigation/runtime/maps
+  start_script: /home/unitree/ws/device-navigation/src/a2_system/tools/start_jt128_3d_stack.sh
+  stop_script: /home/unitree/ws/device-navigation/src/a2_system/tools/stop_jt128_stack.sh
   command_timeout_sec: 15.0

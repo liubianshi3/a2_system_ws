@@ -21,9 +21,15 @@ from launch_ros.parameter_descriptions import ParameterValue
 
 def _unitree_ddsc_env():
     env = {
-        # Keep Unitree SDK2's CycloneDDS participant out of the ROS 2 CycloneDDS
-        # process path; otherwise SDK2 can fail creating DDS domain 0 explicitly.
-        "RMW_IMPLEMENTATION": os.environ.get("A2_UNITREE_RMW_IMPLEMENTATION", "rmw_fastrtps_cpp"),
+        # Unitree SDK2 creates its own CycloneDDS domain explicitly. If this
+        # bridge process also uses ROS 2 CycloneDDS, SDK2 throws
+        # PreconditionNotMetError("Failed to create domain explicitly").
+        # Keep this process isolated while the rest of the ROS graph stays on
+        # CycloneDDS.
+        "RMW_IMPLEMENTATION": os.environ.get(
+            "A2_UNITREE_RMW_IMPLEMENTATION",
+            "rmw_fastrtps_cpp",
+        ),
     }
     candidates = [
         "/opt/unitree_robotics/lib/x86_64/libddsc.so.0",

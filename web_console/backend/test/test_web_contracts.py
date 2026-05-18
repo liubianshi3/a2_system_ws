@@ -58,15 +58,53 @@ def test_default_config_exposes_camera_topics():
     assert config.native_slam.request_topic == "/api/slam_operate/request"
     assert config.native_slam.response_topic == "/api/slam_operate/response"
     assert config.native_slam.response_timeout_sec >= 1.0
-    assert config.ros.pointcloud_topic == "/jt128/front/points"
-    assert config.ros.pointcloud_fallback_topic == "/jt128/front/points"
+    assert config.ros.pointcloud_topic == "/jt128/dlio/map_points"
+    assert config.ros.pointcloud_fallback_topic == ""
+    assert config.ros.pointcloud_map_topics == ["/jt128/dlio/map_points"]
     assert config.ros.task_manager_service == "/a2/task_manager/command"
     assert config.ros.localization_pose_topic == "/a2/relocalization/pose"  # 3D-first
     assert config.ros.localization_pose_msg_type == "geometry_msgs/msg/PoseWithCovarianceStamped"
     assert config.ros.pose_goal_status_topic == "/a2/nav2/status"
     assert config.ros.pointcloud_primary_stale_sec > 0.0
     assert config.ros.pointcloud_preview_max_points >= 20000
+    assert config.health.websocket_pose_hz <= 10.0
+    assert config.health.websocket_status_hz <= 5.0
     assert config.stack.start_script.endswith("start_jt128_3d_stack.sh")
+
+
+def test_3d_config_uses_source_workspace_defaults():
+    config = load_config(Path(__file__).resolve().parents[1] / "config.3d.yaml")
+
+    assert config.stack.workspace == "/home/unitree/ws/device-navigation"
+    assert config.stack.map_root == "/home/unitree/ws/device-navigation/runtime/maps"
+    assert config.stack.start_script == "/home/unitree/ws/device-navigation/src/a2_system/tools/start_jt128_3d_stack.sh"
+    assert config.stack.stop_script == "/home/unitree/ws/device-navigation/src/a2_system/tools/stop_jt128_stack.sh"
+
+
+def test_a2_workspace_env_overrides_3d_stack_paths(monkeypatch):
+    monkeypatch.setenv("A2_WORKSPACE", "/tmp/a2_ws")
+    monkeypatch.setenv("A2_NETWORK_INTERFACE", "enp3s0")
+
+    config = load_config(Path(__file__).resolve().parents[1] / "config.3d.yaml")
+
+    assert config.stack.workspace == "/tmp/a2_ws"
+    assert config.stack.map_root == "/tmp/a2_ws/runtime/maps"
+    assert config.stack.start_script == "/tmp/a2_ws/src/a2_system/tools/start_jt128_3d_stack.sh"
+    assert config.stack.stop_script == "/tmp/a2_ws/src/a2_system/tools/stop_jt128_stack.sh"
+    assert config.stack.network_interface == "enp3s0"
+
+
+def test_web_systemd_service_targets_current_a2_source_workspace():
+    repo_root = Path(__file__).resolve().parents[3]
+    unit_source = (repo_root / "web_console/systemd/a2-web-console.service").read_text(encoding="utf-8")
+    suite_source = (repo_root / "src/a2_system/tools/start_web_console_suite.sh").read_text(encoding="utf-8")
+
+    assert "/home/unitree/a2_system_ws" not in unit_source
+    assert "/opt/a2_system_ws" not in unit_source
+    assert "CONFIG_PATH=/home/unitree/ws/device-navigation/web_console/backend/config.3d.yaml" in unit_source
+    assert "Environment=A2_WORKSPACE=/home/unitree/ws/device-navigation" in unit_source
+    assert "CONFIG_PATH=${WORKSPACE}/web_console/backend/config.3d.yaml" in suite_source
+    assert "WorkingDirectory=${WORKSPACE}/web_console" in suite_source
 
 
 def test_docker_config_uses_raw_camera_when_compressed_topic_is_absent():
@@ -77,6 +115,7 @@ def test_docker_config_uses_raw_camera_when_compressed_topic_is_absent():
     assert config.ros.camera_image_topic == "/camera/image_raw"
     assert config.ros.pointcloud_topic == "/jt128/front/points"
     assert config.ros.pointcloud_fallback_topic == "/a2/map/pointcloud_3d"
+    assert config.ros.pointcloud_map_topics[0] == "/jt128/dlio/map_points"
     assert config.ros.odom_topic == "/odometry/local"
     assert config.navigation.backend == "nav2"
     assert config.navigation.goal_topic == "/a2/nav3/goal_pose"
@@ -92,6 +131,7 @@ def test_docker_config_uses_jt128_3d_stack_and_keeps_manual_control():
     assert config.ros.localization_pose_topic == "/a2/relocalization/pose"
     assert config.ros.pointcloud_topic == "/jt128/front/points"
     assert config.ros.pointcloud_fallback_topic == "/a2/map/pointcloud_3d"
+    assert config.ros.pointcloud_map_topics[0] == "/jt128/dlio/map_points"
     assert config.ros.odom_topic == "/odometry/local"
     assert config.navigation.backend == "nav2"
     assert config.navigation.goal_topic == "/a2/nav3/goal_pose"
@@ -177,11 +217,50 @@ def test_manual_control_contract_publishes_safe_cmd_vel():
     api_source = (root / "frontend/src/api.ts").read_text()
     app_source = (root / "frontend/src/App.tsx").read_text()
     controls_source = (root / "frontend/src/components/ControlSidebar.tsx").read_text()
+    stack_source = (root / "backend/stack_control.py").read_text()
+    grpc_source = (root / "backend/grpc_server.py").read_text()
 
     assert "/api/manual-control/cmd_vel" in main_source
+    assert "stack_controller.ensure_manual_control_standby" in main_source
     assert "sendManualVelocityCommand" in api_source
     assert "ManualControlSection" in controls_source
+    assert "snapshot.manual_control.enabled" in app_source
+    assert "cmdTopic={snapshot.manual_control.cmd_topic}" in app_source
+    assert "手动控制未启用" in app_source
     assert "onManualVelocityCommand" in app_source
+    assert "toLocaleTimeString" in app_source
+    assert "setLastManualControlMessage(`${stamp} ${result.message}`)" in app_source
+    assert "cmdTopic" in controls_source
+    assert "onMouseDown={(event) => handleMouseDown(key, event)}" in controls_source
+    assert "onMouseUp={finishCommand}" in controls_source
+    assert "onTouchStart={(event) => handleTouchStart(key, event)}" in controls_source
+    assert "onTouchEnd={finishCommand}" in controls_source
+    assert "shouldSkipClickReplay(key)" in controls_source
+    assert "suppressClickRef" not in controls_source
+    assert "onClick={() =>" in controls_source
+    assert "按住方向键持续发布" in controls_source
+    assert "def ensure_manual_control_standby" in stack_source
+    assert "start_standby_sdk_bridge" in stack_source
+    assert "start_standby_control_bridge" in stack_source
+    assert "def _standby_sdk_interface" in stack_source
+    assert "def _standby_control_interface" in stack_source
+    assert "def _manual_control_standby_mismatches" in stack_source
+    assert "self.config.stack.network_interface" in stack_source
+    assert "os.environ.get(\"A2_SDK_INTERFACE\") or self.config.stack.network_interface" in stack_source
+    assert "network_interface:={sdk_iface}" in stack_source
+    assert "A2_CONTROL_ALLOW_WITHOUT_MAP" in stack_source
+    assert "A2_CONTROL_ALLOW_WITHOUT_LOCALIZATION" in stack_source
+    assert "ensure_manual_control_standby" in grpc_source
+
+
+def test_real_3d_config_enables_manual_control_for_true_dog():
+    config = load_config(Path(__file__).resolve().parents[1] / "config.3d.yaml")
+
+    assert config.manual_control.enabled is True
+    assert config.manual_control.cmd_topic == "/cmd_vel_safe"
+    assert config.manual_control.max_linear_x <= 0.4
+    assert config.manual_control.max_linear_y <= 0.25
+    assert config.manual_control.max_angular_z <= 0.8
 
 
 def test_gait_control_contract_publishes_unitree_sport_requests():
@@ -225,6 +304,15 @@ def test_initial_pose_button_renders_inline_feedback_in_navigation_drawer():
     assert "initialPoseError" in controls_source
     assert "initial-pose-feedback" in controls_source
     assert "disabled={initialPoseBusy || !selectedGoal || !canSetInitialPose}" in controls_source
+
+
+def test_3d_robot_marker_does_not_snap_pose_to_pointcloud_surface():
+    root = Path(__file__).resolve().parents[2]
+    source = (root / "frontend/src/components/PointCloudCanvas3D.tsx").read_text(encoding="utf-8")
+
+    assert "markerPositionFromRos(current, { x: pose.x ?? 0, y: pose.y ?? 0, z: 0 }, false)" in source
+    assert "markerPositionFromRos(current, { x: selectedGoal.x, y: selectedGoal.y, z: 0 }, true)" in source
+    assert "markerPositionFromRos(current, { x: activeGoal.x, y: activeGoal.y, z: 0 }, true)" in source
 
 
 def test_direct_navigation_command_turns_then_drives_to_goal():
@@ -370,6 +458,18 @@ def test_jt128_startup_does_not_treat_socket_open_success_as_failure():
 
     assert "SocketSource::Open" not in script
     assert "bind failed|open udp source failed|\\\\[FATAL\\\\]" in script
+    assert "reset_ros2_daemon()" in script
+    assert "ros2 daemon stop" in script
+    assert "wait_topic_message /jt128/front/points 12" in script
+
+
+def test_jt128_dlio_mapping_does_not_default_to_graph_pid_overlay():
+    root = Path(__file__).resolve().parents[3]
+    script = (root / "src/a2_system/tools/start_jt128_dlio_mapping.sh").read_text(encoding="utf-8")
+
+    assert 'GRAPH_PID_WS="${A2_GRAPH_PID_WS:-}"' in script
+    assert 'A2_GRAPH_PID_WS:-$HOME/graph_pid_ws' not in script
+    assert 'set A2_GRAPH_PID_WS explicitly' in script
 
 
 def test_octomap_mapping_node_publishes_dlio_tf_chain():
@@ -396,6 +496,34 @@ def test_dlio_mapping_launch_uses_si_imu_converter():
     assert "imu_to_si_converter.py" in launch
     assert "/jt128/front/imu_si" in launch
     assert "start_imu_si_converter" in launch
+    assert 'DeclareLaunchArgument("imu_angular_velocity_scale", default_value="0.017453292519943295")' in launch
+    assert 'os.environ.get("A2_WORKSPACE"' in launch
+
+
+def test_jt128_lidar_and_imu_axes_are_configured_separately():
+    root = Path(__file__).resolve().parents[3]
+    dlio_config = (root / "src/a2_system/config/dlio_jt128.yaml").read_text(encoding="utf-8")
+    extrinsics_config = (root / "src/a2_system/config/jt128_extrinsics.yaml").read_text(encoding="utf-8")
+
+    assert "extrinsics/baselink2imu/R: [0.0, 0.0, 1.0," in dlio_config
+    assert "extrinsics/baselink2lidar/R: [0.0, 0.0, 1.0," in dlio_config
+    assert "0.0, -1.0, 0.0]" in dlio_config
+    assert "The JT128 point cloud axes differ from the internal IMU axes" in dlio_config
+    assert "rotation_matrix: [0.0, 0.0, 1.0," in extrinsics_config
+    assert "0.0, -1.0, 0.0]" in extrinsics_config
+    assert "jt128_internal_imu" in extrinsics_config
+
+
+def test_jt128_dlio_watchdog_does_not_stop_mapping_on_single_speed_spike():
+    root = Path(__file__).resolve().parents[3]
+    watchdog = (root / "src/a2_system/scripts/jt128_dlio_watchdog.py").read_text(encoding="utf-8")
+    launch = (root / "src/a2_bringup/launch/dlio_mapping.launch.py").read_text(encoding="utf-8")
+
+    assert "fault_sample_count" in watchdog
+    assert "self.pending_fault_count" in watchdog
+    assert "state=\"suspect\"" in watchdog
+    assert "self.pending_fault_count = 0" in watchdog
+    assert '"stop_on_fault": False' in launch
 
 
 def test_web_bridge_falls_back_to_local_odom_pose_when_relocalization_missing():
@@ -405,6 +533,47 @@ def test_web_bridge_falls_back_to_local_odom_pose_when_relocalization_missing():
     assert "def _should_use_odom_pose_fallback" in bridge
     assert "def _pose_from_odom" in bridge
     assert "source=self.config.ros.odom_topic" in bridge
+
+
+def test_websocket_odom_updates_are_rate_limited_to_keep_pointcloud_responsive():
+    root = Path(__file__).resolve().parents[3]
+    bridge = (root / "web_console/backend/ros_bridge.py").read_text(encoding="utf-8")
+    config = (root / "web_console/backend/config.py").read_text(encoding="utf-8")
+
+    assert "websocket_pose_hz" in config
+    assert "websocket_status_hz" in config
+    assert "websocket_battery_hz" in config
+    assert "def _publish_rate_limited" in bridge
+    assert "def _publish_status" in bridge
+    assert "def _publish_battery" in bridge
+    assert 'key="status"' in bridge
+    assert 'key="battery"' in bridge
+    assert 'key="odom_pose"' in bridge
+    odom_handler = bridge[bridge.index("def _on_odom") : bridge.index("def _on_tf")]
+    status_handlers = bridge[bridge.index("def _on_real_report") : bridge.index("def _on_pose_goal_status")]
+    battery_handler = bridge[bridge.index("def _on_battery") : bridge.index("def _on_scan_mission_status")]
+    assert 'self._publish("health", self.get_health_dict())' not in odom_handler
+    assert 'self._publish("status", dump_model(self.status))' not in status_handlers
+    assert 'self._publish("battery", dump_model(self.battery))' not in battery_handler
+
+
+def test_frontend_warns_when_websocket_disconnected_without_snapshot_polling():
+    root = Path(__file__).resolve().parents[3]
+    app = (root / "web_console/frontend/src/App.tsx").read_text(encoding="utf-8")
+    socket_hook = (root / "web_console/frontend/src/hooks/useBackendSocket.ts").read_text(encoding="utf-8")
+
+    disconnected_handler = app[app.index("!websocketConnected") : app.index("legacy-function-button")]
+    assert "正在自动重连" in disconnected_handler
+    assert "fetchSnapshot()" not in disconnected_handler
+    assert "window.setTimeout(connect, 1500)" in socket_hook
+
+
+def test_mapping_mode_can_open_3d_view_before_projected_map_exists():
+    root = Path(__file__).resolve().parents[3]
+    app = (root / "web_console/frontend/src/App.tsx").read_text(encoding="utf-8")
+
+    has_3d_viewer_data = app[app.index("const has3DViewerData") : app.index("const directNavigationBackend")]
+    assert 'stack?.mode === "mapping"' in has_3d_viewer_data
 
 
 def test_initial_pose_readiness_waits_for_localization_pose_not_odom_fallback():

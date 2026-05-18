@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -27,8 +28,13 @@ class GrpcConfig:
 @dataclass
 class RosTopicConfig:
     map_topic: str = "/map"
-    pointcloud_topic: str = "/jt128/front/points"
-    pointcloud_fallback_topic: str = "/jt128/front/points"
+    pointcloud_topic: str = "/jt128/dlio/map_points"
+    pointcloud_fallback_topic: str = ""
+    pointcloud_map_topics: list[str] = field(
+        default_factory=lambda: [
+            "/jt128/dlio/map_points",
+        ]
+    )
     pointcloud_primary_stale_sec: float = 2.0
     pointcloud_preview_max_points: int = 20000
     manage_map_service: str = "/map_manager/manage_map"
@@ -138,6 +144,9 @@ class HealthConfig:
     pose_stale_sec: float = 2.0
     battery_stale_sec: float = 5.0
     health_broadcast_hz: float = 1.0
+    websocket_pose_hz: float = 10.0
+    websocket_status_hz: float = 5.0
+    websocket_battery_hz: float = 2.0
 
 
 @dataclass
@@ -152,11 +161,11 @@ class NativeSlamConfig:
 
 @dataclass
 class StackConfig:
-    workspace: str = "~/a2_system_ws"
+    workspace: str = "/home/unitree/ws/device-navigation"
     network_interface: str = "net1"
-    map_root: str = "~/a2_system_ws/runtime/maps"
-    start_script: str = "~/a2_system_ws/src/a2_system/tools/start_jt128_3d_stack.sh"
-    stop_script: str = "~/a2_system_ws/src/a2_system/tools/stop_jt128_stack.sh"
+    map_root: str = "/home/unitree/ws/device-navigation/runtime/maps"
+    start_script: str = "/home/unitree/ws/device-navigation/src/a2_system/tools/start_jt128_3d_stack.sh"
+    stop_script: str = "/home/unitree/ws/device-navigation/src/a2_system/tools/stop_jt128_stack.sh"
     command_timeout_sec: float = 15.0
 
 
@@ -202,4 +211,23 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
             loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
             _update_dataclass(config, loaded)
             config.config_path = path
+    _apply_environment_overrides(config)
     return config
+
+
+def _apply_environment_overrides(config: AppConfig) -> None:
+    workspace = os.environ.get("A2_WORKSPACE")
+    if workspace:
+        workspace = str(Path(workspace).expanduser())
+        config.stack.workspace = workspace
+        config.stack.map_root = os.environ.get("A2_MAP_ROOT", f"{workspace}/runtime/maps")
+        config.stack.start_script = os.environ.get(
+            "A2_STACK_START_SCRIPT",
+            f"{workspace}/src/a2_system/tools/start_jt128_3d_stack.sh",
+        )
+        config.stack.stop_script = os.environ.get(
+            "A2_STACK_STOP_SCRIPT",
+            f"{workspace}/src/a2_system/tools/stop_jt128_stack.sh",
+        )
+    if os.environ.get("A2_NETWORK_INTERFACE"):
+        config.stack.network_interface = os.environ["A2_NETWORK_INTERFACE"]

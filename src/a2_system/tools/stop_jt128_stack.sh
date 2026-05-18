@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-WORKSPACE="${A2_WORKSPACE:-$HOME/a2_system_ws}"
+WORKSPACE="${A2_WORKSPACE:-/home/unitree/ws/device-navigation}"
 STATE_FILE="${WORKSPACE}/runtime/jt128_dlio_stack_state.yaml"
 
 kill_pattern() {
@@ -24,6 +24,7 @@ STACK_PATTERNS=(
   "jt128_driver.launch.py"
   "jt128_hesai_driver"
   "hesai_ros_driver_node"
+  "imu_to_si_converter.py"
   "dlio_odom_node"
   "dlio_map_node"
   "jt128_dlio_odom"

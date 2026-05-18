@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-WORKSPACE="${A2_WORKSPACE:-$HOME/a2_system_ws}"
+WORKSPACE="${A2_WORKSPACE:-/home/unitree/ws/device-navigation}"
 LIDAR_IFACE="${A2_JT128_INTERFACE:-net1}"
 SDK_IFACE="${A2_SDK_INTERFACE:-eth0}"
 CONTROL_IFACE="${A2_CONTROL_INTERFACE:-$SDK_IFACE}"
@@ -25,6 +25,7 @@ WEB_BACKEND_PYTHON="${WORKSPACE}/web_console/.venv/bin/python"
 WEB_BACKEND_CONFIG="${WORKSPACE}/web_console/backend/config.3d.yaml"
 WEB_FALLBACK_LOG="${LOG_DIR}/web_console_fallback.log"
 FAST_DDS_TRANSPORTS="${A2_FASTDDS_BUILTIN_TRANSPORTS:-${FASTDDS_BUILTIN_TRANSPORTS:-UDPv4}}"
+ROS_RMW_IMPLEMENTATION="${A2_RMW_IMPLEMENTATION:-${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}}"
 
 usage() {
   cat <<EOF
@@ -193,8 +194,9 @@ source_ros() {
 }
 
 configure_ros_transport() {
-  export FASTDDS_BUILTIN_TRANSPORTS="${FAST_DDS_TRANSPORTS}"
-  log "Using Fast DDS builtin transports: ${FASTDDS_BUILTIN_TRANSPORTS}"
+  export RMW_IMPLEMENTATION="${ROS_RMW_IMPLEMENTATION}"
+  unset FASTDDS_BUILTIN_TRANSPORTS
+  log "Using ROS RMW implementation: ${RMW_IMPLEMENTATION}"
 }
 
 require_a2_system_executable() {
@@ -241,7 +243,7 @@ stop_navigation_components() {
     "lifecycle_manager"
     "local_costmap"
     "global_costmap"
-    "map_server"
+    "nav2_map_server/map_server"
     "jt128_navigation_static_tf_manager"
     "auto_scan_mission.py"
     "task_manager.py"
@@ -316,7 +318,8 @@ setsid bash -lc "
   set -e
   source /opt/ros/humble/setup.bash
   source '${WORKSPACE}/install/setup.bash'
-  export FASTDDS_BUILTIN_TRANSPORTS='${FASTDDS_BUILTIN_TRANSPORTS}'
+  export RMW_IMPLEMENTATION='${RMW_IMPLEMENTATION}'
+  unset FASTDDS_BUILTIN_TRANSPORTS
   ros2 launch a2_bringup jt128_3d_navigation.launch.py \
     map_id:='${MAP_ID}' \
     start_static_tf:=true \

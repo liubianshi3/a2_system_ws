@@ -50,6 +50,19 @@
     # Transform points into target_frame before classification/publishing.
     # Keep legacy frame_id empty; if non-empty, it overrides target_frame.
     target_frame: map
+    # The ray ground classifier must run in a robot-local frame. Publishing can
+    # remain in map for Nav2/map consumers, but slope/radius logic must not use
+    # map-origin coordinates.
+    classification_frame: base_link
+    # GroundSegmenter thresholds assume classifier z=0 is the local ground
+    # plane. JT128/A2 field data shows the front floor plane is tilted/offset in
+    # base_link, so classify on height residual to this calibrated plane while
+    # keeping published cloud coordinates physical.
+    classification_z_offset_m: 0.0
+    classification_ground_plane_enabled: true
+    classification_ground_plane_a: -0.1413
+    classification_ground_plane_b: 0.0850
+    classification_ground_plane_c: 0.7545
     frame_id: ""
     transform_timeout_sec: 0.2
 
@@ -57,12 +70,12 @@
     input_min_range_m: 0.15
     self_filter_enabled: true
     self_filter_frame: base_link
-    self_filter_min_x: -0.45
-    self_filter_max_x: 0.45
-    self_filter_min_y: -0.35
-    self_filter_max_y: 0.35
-    self_filter_min_z: -0.20
-    self_filter_max_z: 0.45
+    self_filter_min_x: -0.70
+    self_filter_max_x: 0.95
+    self_filter_min_y: -0.55
+    self_filter_max_y: 0.55
+    self_filter_min_z: -0.30
+    self_filter_max_z: 0.90
 
     process_every_n: 1
     max_consecutive_failures: 5

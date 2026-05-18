@@ -104,6 +104,27 @@ class TraversabilityToObstacleCloud(Node):
         self._local_max_x = float(self.declare_parameter("local_max_x", 6.0).value)
         self._local_min_y = float(self.declare_parameter("local_min_y", -4.0).value)
         self._local_max_y = float(self.declare_parameter("local_max_y", 4.0).value)
+        self._self_filter_enabled = bool(
+            self.declare_parameter("self_filter_enabled", True).value
+        )
+        self._self_filter_min_x = float(
+            self.declare_parameter("self_filter_min_x", -0.70).value
+        )
+        self._self_filter_max_x = float(
+            self.declare_parameter("self_filter_max_x", 0.95).value
+        )
+        self._self_filter_min_y = float(
+            self.declare_parameter("self_filter_min_y", -0.55).value
+        )
+        self._self_filter_max_y = float(
+            self.declare_parameter("self_filter_max_y", 0.55).value
+        )
+        self._self_filter_min_z = float(
+            self.declare_parameter("self_filter_min_z", -0.30).value
+        )
+        self._self_filter_max_z = float(
+            self.declare_parameter("self_filter_max_z", 0.90).value
+        )
         self._max_output_points = int(
             self.declare_parameter("max_output_points", 20000).value
         )
@@ -124,7 +145,8 @@ class TraversabilityToObstacleCloud(Node):
             f"lethal_threshold={self._lethal_threshold} (legacy={self._obstacle_threshold}) "
             f"z={self._obstacle_z:.2f} hz={self._publish_hz:.1f} "
             f"input={self._traversability_topic} output={self._output_topic} "
-            f"output_frame={self._output_frame} unknown_policy={self._unknown_policy}"
+            f"output_frame={self._output_frame} unknown_policy={self._unknown_policy} "
+            f"self_filter={str(self._self_filter_enabled).lower()}"
         )
 
     def _on_grid(self, msg: OccupancyGrid) -> None:
@@ -199,6 +221,19 @@ class TraversabilityToObstacleCloud(Node):
         )
         return points[mask]
 
+    def _apply_self_filter(self, points: np.ndarray) -> np.ndarray:
+        if not self._self_filter_enabled or points.size == 0:
+            return points
+        inside_body = (
+            (points[:, 0] >= self._self_filter_min_x)
+            & (points[:, 0] <= self._self_filter_max_x)
+            & (points[:, 1] >= self._self_filter_min_y)
+            & (points[:, 1] <= self._self_filter_max_y)
+            & (points[:, 2] >= self._self_filter_min_z)
+            & (points[:, 2] <= self._self_filter_max_z)
+        )
+        return points[~inside_body]
+
     def _publish(self) -> None:
         if self._last_grid is None:
             return
@@ -254,6 +289,11 @@ class TraversabilityToObstacleCloud(Node):
         points_in_grid_frame = np.column_stack((x_coords, y_coords, z_coords)).astype(np.float32)
         points = self._transform_points(points_in_grid_frame, grid.header.frame_id)
         if points is None:
+            self._publish_empty()
+            return
+
+        points = self._apply_self_filter(points)
+        if points.size == 0:
             self._publish_empty()
             return
 

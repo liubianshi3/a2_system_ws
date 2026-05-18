@@ -118,6 +118,12 @@ nav_msgs::msg::OccupancyGrid make_grid_header(
   return grid;
 }
 
+struct FilteredCloud
+{
+  Eigen::MatrixX3f classification_xyz;
+  Eigen::MatrixX3f target_xyz;
+};
+
 }  // namespace
 
 class GroundSegmentationCppNode : public rclcpp::Node
@@ -176,13 +182,16 @@ public:
     RCLCPP_INFO(
       get_logger(),
       "ground_segmentation_cpp ready: input=%s target_frame=%s self_filter=%s "
-      "ground=%s obstacle=%s trav=%s sectors=%d general=%.1fdeg local=%.1fdeg "
-      "v2=%s",
+      "classification_frame=%s ground=%s obstacle=%s trav=%s sectors=%d "
+      "general=%.1fdeg local=%.1fdeg classification_z_offset=%.2fm "
+      "ground_plane=%s v2=%s",
       input_topic_.c_str(), target_frame_.c_str(),
-      self_filter_enabled_ ? "true" : "false", ground_topic_.c_str(),
-      obstacle_topic_.c_str(), traversability_topic_.c_str(),
+      self_filter_enabled_ ? "true" : "false", classification_frame_.c_str(),
+      ground_topic_.c_str(), obstacle_topic_.c_str(), traversability_topic_.c_str(),
       static_cast<int>(std::ceil(360.0 / std::max(0.1, params_.radial_divider_angle_deg))),
       params_.general_max_slope_deg, params_.local_max_slope_deg,
+      classification_z_offset_m_,
+      classification_ground_plane_enabled_ ? "true" : "false",
       params_.traversability_v2_enabled ? "true" : "false");
   }
 
@@ -257,6 +266,16 @@ private:
     if (!legacy_frame_id.empty()) {
       target_frame_ = legacy_frame_id;
     }
+    classification_frame_ = declare_parameter<std::string>("classification_frame", "base_link");
+    if (classification_frame_.empty()) {
+      classification_frame_ = target_frame_;
+    }
+    classification_z_offset_m_ = declare_parameter<double>("classification_z_offset_m", 0.0);
+    classification_ground_plane_enabled_ = declare_parameter<bool>(
+      "classification_ground_plane_enabled", false);
+    classification_ground_plane_a_ = declare_parameter<double>("classification_ground_plane_a", 0.0);
+    classification_ground_plane_b_ = declare_parameter<double>("classification_ground_plane_b", 0.0);
+    classification_ground_plane_c_ = declare_parameter<double>("classification_ground_plane_c", 0.0);
     transform_timeout_sec_ = declare_parameter<double>("transform_timeout_sec", 0.2);
 
     input_min_range_m_ = std::max(0.0, declare_parameter<double>("input_min_range_m", 0.15));
@@ -323,9 +342,10 @@ private:
            p.z() >= self_filter_min_z_ && p.z() <= self_filter_max_z_;
   }
 
-  Eigen::MatrixX3f filter_and_transform(
+  FilteredCloud filter_and_transform(
     const Eigen::Ref<const Eigen::MatrixX3f> & raw_xyz,
-    const Eigen::Isometry3f & target_from_source,
+    const Eigen::Isometry3f & classification_from_source,
+    const Eigen::Isometry3f & target_from_classification,
     const Eigen::Isometry3f & self_from_source,
     bool use_self_filter,
     std::size_t & dropped_min_range,
@@ -333,7 +353,8 @@ private:
   {
     dropped_min_range = 0;
     dropped_self_filter = 0;
-    Eigen::MatrixX3f out(raw_xyz.rows(), 3);
+    Eigen::MatrixX3f classification_out(raw_xyz.rows(), 3);
+    Eigen::MatrixX3f target_out(raw_xyz.rows(), 3);
     Eigen::Index w = 0;
 
     for (Eigen::Index i = 0; i < raw_xyz.rows(); ++i) {
@@ -354,12 +375,26 @@ private:
         }
       }
 
-      const Eigen::Vector3f target = target_from_source * raw;
-      out.row(w++) = target.transpose();
+      const Eigen::Vector3f physical_classification = classification_from_source * raw;
+      Eigen::Vector3f classification = physical_classification;
+      if (classification_ground_plane_enabled_) {
+        const float ground_z =
+          static_cast<float>(
+          classification_ground_plane_a_ * static_cast<double>(classification.x()) +
+          classification_ground_plane_b_ * static_cast<double>(classification.y()) +
+          classification_ground_plane_c_);
+        classification.z() -= ground_z;
+      }
+      classification.z() += static_cast<float>(classification_z_offset_m_);
+      const Eigen::Vector3f target = target_from_classification * physical_classification;
+      classification_out.row(w) = classification.transpose();
+      target_out.row(w) = target.transpose();
+      ++w;
     }
 
-    out.conservativeResize(w, 3);
-    return out;
+    classification_out.conservativeResize(w, 3);
+    target_out.conservativeResize(w, 3);
+    return FilteredCloud{classification_out, target_out};
   }
 
   void on_cloud(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg)
@@ -383,10 +418,16 @@ private:
       }
 
       const auto effective_target_frame = target_frame_.empty() ? source_frame : target_frame_;
-      Eigen::Isometry3f target_from_source = Eigen::Isometry3f::Identity();
+      const auto effective_classification_frame =
+        classification_frame_.empty() ? effective_target_frame : classification_frame_;
+      Eigen::Isometry3f classification_from_source = Eigen::Isometry3f::Identity();
+      Eigen::Isometry3f target_from_classification = Eigen::Isometry3f::Identity();
       Eigen::Isometry3f self_from_source = Eigen::Isometry3f::Identity();
       try {
-        target_from_source = lookup_isometry(effective_target_frame, source_frame, msg->header.stamp);
+        classification_from_source = lookup_isometry(
+          effective_classification_frame, source_frame, msg->header.stamp);
+        target_from_classification = lookup_isometry(
+          effective_target_frame, effective_classification_frame, msg->header.stamp);
         if (self_filter_enabled_ && !self_filter_frame_.empty()) {
           self_from_source = lookup_isometry(self_filter_frame_, source_frame, msg->header.stamp);
         }
@@ -405,11 +446,13 @@ private:
       last_input_points_ = static_cast<std::size_t>(raw_xyz.rows());
       std::size_t dropped_min_range = 0;
       std::size_t dropped_self_filter = 0;
-      Eigen::MatrixX3f xyz = filter_and_transform(
-        raw_xyz, target_from_source, self_from_source,
+      FilteredCloud filtered = filter_and_transform(
+        raw_xyz, classification_from_source, target_from_classification, self_from_source,
         self_filter_enabled_ && !self_filter_frame_.empty(),
         dropped_min_range, dropped_self_filter);
-      last_filtered_points_ = static_cast<std::size_t>(xyz.rows());
+      Eigen::MatrixX3f & classification_xyz = filtered.classification_xyz;
+      Eigen::MatrixX3f & target_xyz = filtered.target_xyz;
+      last_filtered_points_ = static_cast<std::size_t>(classification_xyz.rows());
       last_dropped_min_range_ = dropped_min_range;
       last_dropped_self_filter_ = dropped_self_filter;
 
@@ -418,7 +461,7 @@ private:
 
       std_msgs::msg::Header out_header = msg->header;
       out_header.frame_id = effective_target_frame;
-      const auto N = static_cast<std::size_t>(xyz.rows());
+      const auto N = static_cast<std::size_t>(classification_xyz.rows());
       if (N < 10) {
         Eigen::MatrixX3f empty(0, 3);
         ground_pub_->publish(build_xyz_cloud(out_header, empty));
@@ -427,7 +470,7 @@ private:
         consecutive_failures_ = 0;
         return;
       }
-      auto cls = segmenter_->classify(xyz);
+      auto cls = segmenter_->classify(classification_xyz);
 
       // Split ground / obstacle, preserving original order.
       Eigen::MatrixX3f ground(static_cast<Eigen::Index>(cls.ground_count), 3);
@@ -438,9 +481,9 @@ private:
       for (std::size_t i = 0; i < N; ++i) {
         const auto row = static_cast<Eigen::Index>(i);
         if (cls.ground_mask[i]) {
-          ground.row(gi++) = xyz.row(row);
+          ground.row(gi++) = target_xyz.row(row);
         } else {
-          obstacle.row(oi++) = xyz.row(row);
+          obstacle.row(oi++) = target_xyz.row(row);
         }
       }
 
@@ -670,6 +713,12 @@ private:
   std::string status_topic_;
   std::string debug_topic_prefix_;
   std::string target_frame_;
+  std::string classification_frame_;
+  double classification_z_offset_m_{0.0};
+  bool classification_ground_plane_enabled_{false};
+  double classification_ground_plane_a_{0.0};
+  double classification_ground_plane_b_{0.0};
+  double classification_ground_plane_c_{0.0};
   double transform_timeout_sec_{0.2};
   double input_min_range_m_{0.15};
   bool self_filter_enabled_{true};
