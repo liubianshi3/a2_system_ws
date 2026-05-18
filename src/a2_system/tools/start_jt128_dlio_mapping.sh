@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-WORKSPACE="${A2_WORKSPACE:-$HOME/a2_system_ws}"
+WORKSPACE="${A2_WORKSPACE:-/home/unitree/ws/device-navigation}"
 JT128_IFACE="${A2_JT128_INTERFACE:-net1}"
 JT128_IP="${A2_JT128_IP:-192.168.124.20}"
-GRAPH_PID_WS="${A2_GRAPH_PID_WS:-$HOME/graph_pid_ws}"
+GRAPH_PID_WS="${A2_GRAPH_PID_WS:-}"
+ALLOW_GRAPH_PID_WS="${A2_ALLOW_GRAPH_PID_WS:-0}"
 UNITREE_SLAM_SERVICE="${A2_UNITREE_SLAM_SERVICE:-unitree_slam.service}"
 START_WEB=1
 DRIVER_ONLY=0
@@ -13,6 +14,13 @@ MAP_ROOT="${A2_MAP_ROOT:-${WORKSPACE}/runtime/maps}"
 LOG_DIR="${WORKSPACE}/runtime/logs"
 STATE_FILE="${WORKSPACE}/runtime/jt128_dlio_stack_state.yaml"
 FAST_DDS_TRANSPORTS="${A2_FASTDDS_BUILTIN_TRANSPORTS:-${FASTDDS_BUILTIN_TRANSPORTS:-UDPv4}}"
+ROS_RMW_IMPLEMENTATION="${A2_RMW_IMPLEMENTATION:-${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}}"
+EFFECTIVE_GRAPH_PID_WS=""
+case "${ALLOW_GRAPH_PID_WS,,}" in
+  1|true|yes|on)
+    EFFECTIVE_GRAPH_PID_WS="${GRAPH_PID_WS}"
+    ;;
+esac
 
 usage() {
   cat <<EOF
@@ -96,8 +104,11 @@ run_privileged() {
 source_ros() {
   set +u
   source /opt/ros/humble/setup.bash
-  if [[ -f "${GRAPH_PID_WS}/install/setup.bash" ]]; then
-    source "${GRAPH_PID_WS}/install/setup.bash"
+  if [[ -n "${GRAPH_PID_WS}" && -z "${EFFECTIVE_GRAPH_PID_WS}" ]]; then
+    warn "Ignoring A2_GRAPH_PID_WS=${GRAPH_PID_WS}; set A2_ALLOW_GRAPH_PID_WS=1 only for explicit external overlay debugging"
+  fi
+  if [[ -n "${EFFECTIVE_GRAPH_PID_WS}" && -f "${EFFECTIVE_GRAPH_PID_WS}/install/setup.bash" ]]; then
+    source "${EFFECTIVE_GRAPH_PID_WS}/install/setup.bash"
   fi
   if [[ -f "${WORKSPACE}/install/setup.bash" ]]; then
     source "${WORKSPACE}/install/setup.bash"
@@ -110,8 +121,27 @@ source_ros() {
 }
 
 configure_ros_transport() {
-  export FASTDDS_BUILTIN_TRANSPORTS="${FAST_DDS_TRANSPORTS}"
-  log "Using Fast DDS builtin transports: ${FASTDDS_BUILTIN_TRANSPORTS}"
+  export RMW_IMPLEMENTATION="${ROS_RMW_IMPLEMENTATION}"
+  unset FASTDDS_BUILTIN_TRANSPORTS
+  log "Using ROS RMW implementation: ${RMW_IMPLEMENTATION}"
+}
+
+reset_ros2_daemon() {
+  timeout 4 ros2 daemon stop >/dev/null 2>&1 || true
+}
+
+wait_topic_message() {
+  local topic="$1"
+  local timeout_sec="$2"
+  local attempt
+  for attempt in 1 2; do
+    reset_ros2_daemon
+    if timeout "${timeout_sec}" ros2 topic echo --once --qos-reliability best_effort "$topic" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
 }
 
 require_a2_system_executable() {
@@ -163,6 +193,7 @@ stop_interference() {
     "point_cloud_fusion" \
     "dlio_mapping.launch.py" \
     "hesai_ros_driver_node" \
+    "imu_to_si_converter.py" \
     "unitree_slam" \
     "pointcloud_to_laserscan" \
     "slam_toolbox" \
@@ -194,6 +225,7 @@ stop_interference() {
     "point_cloud_fusion" \
     "dlio_mapping.launch.py" \
     "hesai_ros_driver_node" \
+    "imu_to_si_converter.py" \
     "unitree_slam" \
     "pointcloud_to_laserscan" \
     "slam_toolbox" \
@@ -230,7 +262,7 @@ check_network() {
 }
 
 check_packages() {
-  ros2 pkg prefix hesai_ros_driver >/dev/null 2>&1 || die "hesai_ros_driver is missing; source ${GRAPH_PID_WS}/install/setup.bash or install HesaiLidar_ROS_2.0"
+  ros2 pkg prefix hesai_ros_driver >/dev/null 2>&1 || die "hesai_ros_driver is missing from ${WORKSPACE}; install/build hesai_ros_driver there. External graph_pid overlay is disabled unless A2_ALLOW_GRAPH_PID_WS=1."
   if [[ "$DRIVER_ONLY" -eq 0 ]]; then
     if ! ros2 pkg prefix direct_lidar_inertial_odometry >/dev/null 2>&1; then
       if [[ "$ALLOW_MISSING_DLIO" -eq 1 ]]; then
@@ -289,10 +321,11 @@ log "Starting JT128 DLIO mapping launch"
 nohup bash -lc "
   set -e
   source /opt/ros/humble/setup.bash
-  if [ -f '${GRAPH_PID_WS}/install/setup.bash' ]; then source '${GRAPH_PID_WS}/install/setup.bash'; fi
+  if [ -n '${EFFECTIVE_GRAPH_PID_WS}' ] && [ -f '${EFFECTIVE_GRAPH_PID_WS}/install/setup.bash' ]; then source '${EFFECTIVE_GRAPH_PID_WS}/install/setup.bash'; fi
   source '${WORKSPACE}/install/setup.bash'
   export A2_WORKSPACE='${WORKSPACE}'
-  export FASTDDS_BUILTIN_TRANSPORTS='${FASTDDS_BUILTIN_TRANSPORTS}'
+  export RMW_IMPLEMENTATION='${RMW_IMPLEMENTATION}'
+  unset FASTDDS_BUILTIN_TRANSPORTS
   ros2 launch a2_bringup dlio_mapping.launch.py \
     start_driver:=true \
     start_dlio:=${START_DLIO} \
@@ -327,9 +360,9 @@ if grep -Eiq "bind failed|open udp source failed|\\[FATAL\\]" "$LOG_FILE"; then
 fi
 
 log "Waiting for first JT128 pointcloud"
-if ! timeout 12 ros2 topic echo --once --qos-reliability best_effort /jt128/front/points >/dev/null 2>&1; then
+if ! wait_topic_message /jt128/front/points 12; then
   grep -Eiq "bind failed|open udp source failed|\\[FATAL\\]" "$LOG_FILE" && tail -80 "$LOG_FILE" >&2 || true
-  die "JT128 pointcloud /jt128/front/points did not publish within 12s; check sensor packets and UDP port 2368"
+  die "JT128 pointcloud /jt128/front/points did not publish after two 12s checks; check sensor packets and UDP port 2368"
 fi
 
 OCTOMAP_PID=""
@@ -340,7 +373,7 @@ if [[ "$START_DLIO" == "true" ]]; then
   nohup bash -lc "
     set -e
     source /opt/ros/humble/setup.bash
-    if [ -f '${GRAPH_PID_WS}/install/setup.bash' ]; then source '${GRAPH_PID_WS}/install/setup.bash'; fi
+    if [ -n '${EFFECTIVE_GRAPH_PID_WS}' ] && [ -f '${EFFECTIVE_GRAPH_PID_WS}/install/setup.bash' ]; then source '${EFFECTIVE_GRAPH_PID_WS}/install/setup.bash'; fi
     source '${WORKSPACE}/install/setup.bash'
     export A2_WORKSPACE='${WORKSPACE}'
     ros2 launch a2_bringup octomap_mapping.launch.py \
