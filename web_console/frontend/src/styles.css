@@ -844,23 +844,27 @@ button:disabled {
 
 .pointcloud-overlay {
   align-items: center;
-  background: rgba(2, 6, 23, 0.64);
+  background: rgba(2, 6, 23, 0.34);
   color: #dbeafe;
-  border-color: rgba(96, 165, 250, 0.16);
-  bottom: 12px;
-  gap: 14px;
+  border-color: rgba(96, 165, 250, 0.1);
+  bottom: 8px;
+  gap: 10px;
   justify-content: flex-start;
-  min-height: 34px;
+  left: auto;
+  max-width: min(760px, calc(100% - 24px));
+  min-height: 24px;
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 8px 12px;
+  padding: 5px 8px;
+  right: 12px;
   scrollbar-width: thin;
   white-space: nowrap;
 }
 
 .pointcloud-overlay span {
   flex: 0 0 auto;
-  line-height: 1.15;
+  font-size: 11px;
+  line-height: 1.1;
   white-space: nowrap;
 }
 
@@ -1303,6 +1307,8 @@ button:disabled {
 
   .pointcloud-overlay {
     flex-direction: row;
+    left: 12px;
+    max-width: none;
   }
 
   .scene-toolbar-dark {
