@@ -1401,13 +1401,14 @@ class A2GrpcServices:
                 return self._motion_auth_response(self.p.robot_dog_pb2.AuthorizeMotionResponse, **values)
 
             try:
+                await asyncio.to_thread(self.p.stack_controller.ensure_manual_control_standby)
                 result = await self._call_motion_command(context, command="balance_stand")
-            except RosBridgeError as exc:
+            except (RosBridgeError, StackControlError) as exc:
                 return self._motion_auth_response(
                     self.p.robot_dog_pb2.AuthorizeMotionResponse,
                     success=False,
                     message=str(exc),
-                    error_code="ros_bridge_error",
+                    error_code="stack_control_error" if isinstance(exc, StackControlError) else "ros_bridge_error",
                     state=values.get("state", 0),
                     required_action=values.get("required_action", 0),
                     standing=values.get("standing", False),

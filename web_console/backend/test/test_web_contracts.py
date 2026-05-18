@@ -265,6 +265,7 @@ def test_manual_control_contract_publishes_safe_cmd_vel():
 
     assert "/api/manual-control/cmd_vel" in main_source
     assert "stack_controller.ensure_manual_control_standby" in main_source
+    assert main_source.count("stack_controller.ensure_manual_control_standby") >= 2
     assert "sendManualVelocityCommand" in api_source
     assert "ManualControlSection" in controls_source
     assert "snapshot.manual_control.enabled" in app_source

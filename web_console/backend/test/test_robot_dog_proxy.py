@@ -435,6 +435,7 @@ def test_authorize_motion_requires_stand_up_before_software_authorization() -> N
     assert response.required_action == _RobotDogPb2.MOTION_AUTHORIZATION_ACTION_STAND_UP
     assert response.error_code == "stand_up_required"
     assert node.motion_commands == []
+    assert service.p.stack_controller.manual_standby_calls == 0
 
 
 def test_motion_authorization_uses_successful_stand_command_before_unitree_body_height_offset() -> None:
@@ -500,6 +501,7 @@ def test_authorize_motion_calls_balance_stand_as_software_authorization() -> Non
     assert response.motion_authorized is True
     assert response.manual_start_required is False
     assert node.motion_commands == [("balance_stand", 0, 0.0, False)]
+    assert service.p.stack_controller.manual_standby_calls == 1
 
 
 def test_motion_authorization_reports_stand_down_from_unitree_lie_down_mode() -> None:
