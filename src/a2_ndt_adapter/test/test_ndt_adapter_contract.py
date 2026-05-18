@@ -167,3 +167,13 @@ def test_ndt_adapter_logs_runtime_correction_limits():
     assert "(limits: 1.0m, 20deg)" not in text
     assert "max_map_to_odom_translation_step" in text
     assert "max_map_to_odom_rotation_step_deg" in text
+
+
+def test_ndt_adapter_initializes_status_timestamps_before_first_pose():
+    source = Path(__file__).resolve().parents[1] / "a2_ndt_adapter" / "ndt_adapter_node.py"
+    text = source.read_text(encoding="utf-8")
+
+    assert "self.last_pose_stamp = None" in text
+    assert "self.last_odom_receive_time = None" in text
+    assert "self.last_odom_msg_stamp = None" in text
+    assert "self.last_odom_receive_time = self.get_clock().now()" in text

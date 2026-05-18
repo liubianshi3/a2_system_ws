@@ -179,8 +179,11 @@ class A2NdtAdapter(Node):
         self._received_first_odom = False
         self.last_score = -1.0
         self.last_score_stamp = None
+        self.last_pose_stamp = None
 
         self.last_odom_stamp = None
+        self.last_odom_receive_time = None
+        self.last_odom_msg_stamp = None
         self.last_iteration_num = None
         self.cached_map = None
         self.cached_map_frame = self.get_parameter('map_frame').value
@@ -230,9 +233,11 @@ class A2NdtAdapter(Node):
         )
 
     def on_odom(self, msg: Odometry):
+        self.last_odom_receive_time = self.get_clock().now()
+        self.last_odom_msg_stamp = Time.from_msg(msg.header.stamp)
         self.last_odom_msg = msg
         self.last_odom_to_base = pose_to_matrix(msg.pose.pose.position, msg.pose.pose.orientation)
-        self.last_odom_stamp = Time.from_msg(msg.header.stamp)
+        self.last_odom_stamp = self.last_odom_msg_stamp
         if not self._received_first_odom:
             self._received_first_odom = True
             self.get_logger().info(

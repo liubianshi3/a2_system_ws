@@ -75,11 +75,16 @@ def test_docker_config_uses_raw_camera_when_compressed_topic_is_absent():
     assert config.camera.enabled is True
     assert config.camera.prefer_compressed is False
     assert config.ros.camera_image_topic == "/camera/image_raw"
+    assert config.ros.pointcloud_topic == "/jt128/front/points"
+    assert config.ros.pointcloud_fallback_topic == "/a2/map/pointcloud_3d"
+    assert config.ros.odom_topic == "/odometry/local"
     assert config.navigation.backend == "nav2"
+    assert config.navigation.goal_topic == "/a2/nav3/goal_pose"
+    assert config.stack.command_timeout_sec >= 60.0
 
 
-def test_zbe_docker_config_uses_jt128_3d_stack_and_keeps_manual_control():
-    config = load_config(Path(__file__).resolve().parents[1] / "config.docker.zbe.yaml")
+def test_docker_config_uses_jt128_3d_stack_and_keeps_manual_control():
+    config = load_config(Path(__file__).resolve().parents[1] / "config.docker.yaml")
 
     assert config.stack.start_script.endswith("start_jt128_3d_stack.sh")
     assert config.stack.stop_script.endswith("stop_jt128_stack.sh")
@@ -94,9 +99,9 @@ def test_zbe_docker_config_uses_jt128_3d_stack_and_keeps_manual_control():
     assert config.manual_control.cmd_topic == "/cmd_vel_safe"
 
 
-def test_zbe_jt128_navigation_starts_live_motion_not_dry_run():
-    config = load_config(Path(__file__).resolve().parents[1] / "config.docker.zbe.yaml")
-    command = StackController(config)._start_script_command("navigation", "zbe_map")
+def test_jt128_navigation_starts_live_motion_not_dry_run():
+    config = load_config(Path(__file__).resolve().parents[1] / "config.docker.yaml")
+    command = StackController(config)._start_script_command("navigation", "a2_map")
 
     assert "--enable-motion" in command
     assert "--live-motion" in command
@@ -113,10 +118,23 @@ def test_a2_docker_defaults_start_real_live_motion():
     repo_root = Path(__file__).resolve().parents[3]
     compose_source = (repo_root / "docker-compose.a2.yml").read_text(encoding="utf-8")
     entrypoint_source = (repo_root / "docker/entrypoint.sh").read_text(encoding="utf-8")
+    legacy_special_suffix = "".join(("z", "be"))
 
+    assert legacy_special_suffix not in compose_source.lower()
+    assert not (repo_root / f"web_console/backend/config.docker.{legacy_special_suffix}.yaml").exists()
     assert "A2_DOCKER_START_MODE: ${A2_DOCKER_START_MODE:-auto}" in compose_source
     assert "A2_ENABLE_MOTION: ${A2_ENABLE_MOTION:-true}" in compose_source
     assert "A2_LIVE_MOTION: ${A2_LIVE_MOTION:-true}" in compose_source
+    assert "image: ${A2_DOCKER_IMAGE:-a2-system-ws:dev}" in compose_source
+    assert "container_name: ${A2_CONTAINER_NAME:-a2-system-ws-dev}" in compose_source
+    assert "platform: ${A2_DOCKER_PLATFORM:-linux/amd64}" in compose_source
+    assert "A2_REQUIRE_UNITREE_SDK: ${A2_REQUIRE_UNITREE_SDK:-ON}" in compose_source
+    assert "ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-88}" in compose_source
+    assert "A2_SDK_BRIDGE_AUTOSTART: ${A2_SDK_BRIDGE_AUTOSTART:-true}" in compose_source
+    assert "A2_CONTROL_BRIDGE_AUTOSTART: ${A2_CONTROL_BRIDGE_AUTOSTART:-true}" in compose_source
+    assert "A2_CONTROL_ALLOW_WITHOUT_MAP: ${A2_CONTROL_ALLOW_WITHOUT_MAP:-true}" in compose_source
+    assert "A2_CONTROL_ALLOW_WITHOUT_LOCALIZATION: ${A2_CONTROL_ALLOW_WITHOUT_LOCALIZATION:-true}" in compose_source
+    assert "${A2_HOST_MAP_ROOT:-/home/unitree/ws/device-navigation/runtime/maps}" in compose_source
     assert 'local enable_motion="${A2_ENABLE_MOTION:-true}"' in entrypoint_source
     assert 'local live_motion="${A2_LIVE_MOTION:-true}"' in entrypoint_source
 
