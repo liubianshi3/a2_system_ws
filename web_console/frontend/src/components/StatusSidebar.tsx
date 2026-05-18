@@ -130,7 +130,7 @@ export function RuntimeInfoSection({ status, stack }: Pick<StatusSidebarProps, "
       <StatusRow label="角速度 z" value={`${formatNumber(status?.velocity_angular_z, 3)} rad/s`} />
       <StatusRow label="active_map" value={formatNullable(status?.active_map)} />
       <StatusRow label="Nav2 3D" value={stack?.enable_nav2_3d == null ? "—" : String(stack.enable_nav2_3d)} />
-      <StatusRow label="motion" value={stack?.live_motion ? "live" : stack?.enable_motion ? "dry-run" : "planning-only"} />
+      <StatusRow label="motion" value={stack?.live_motion ? "live" : "planning-only"} />
       <StatusRow label="collision cfg" value={formatNullable(stack?.collision_monitor_config)} />
       <StatusRow label="规划器" value={formatNullable(status?.planner_type)} />
       <StatusRow label="行为树" value={formatNullable(status?.bt_filename)} />

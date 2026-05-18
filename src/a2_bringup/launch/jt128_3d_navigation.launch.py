@@ -121,8 +121,8 @@ def generate_launch_description():
             ),
 
             DeclareLaunchArgument("start_safety", default_value="true"),
-            DeclareLaunchArgument("enable_motion", default_value="false"),
-            DeclareLaunchArgument("dry_run", default_value="true"),
+            DeclareLaunchArgument("enable_motion", default_value="true"),
+            DeclareLaunchArgument("dry_run", default_value="false"),
             DeclareLaunchArgument("sdk_interface", default_value="eth0"),
             DeclareLaunchArgument("control_interface", default_value="eth0"),
             DeclareLaunchArgument("use_sim_time", default_value="false"),
@@ -156,7 +156,7 @@ def generate_launch_description():
             ),
             LogInfo(
                 msg=(
-                    "localization_mode=odom_only is for short-range dry-run/live-motion "
+                    "localization_mode=odom_only is for short-range live-motion "
                     "validation only; it is not a formal inspection localization mode."
                 ),
                 condition=IfCondition(is_odom_only_localization),

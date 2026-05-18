@@ -2,14 +2,14 @@
 set -euo pipefail
 
 WORKSPACE="${A2_WORKSPACE:-$HOME/a2_system_ws}"
-MODE="standby"
-REQUESTED_MODE="standby"
+MODE="auto"
+REQUESTED_MODE="auto"
 MAP_ID=""
 LIDAR_IFACE="${A2_JT128_INTERFACE:-net1}"
 SDK_IFACE="${A2_SDK_INTERFACE:-eth0}"
 CONTROL_IFACE="${A2_CONTROL_INTERFACE:-$SDK_IFACE}"
-ENABLE_MOTION=false
-LIVE_MOTION=false
+ENABLE_MOTION=true
+LIVE_MOTION=true
 LOCALIZATION_MODE=ndt
 COLLISION_MONITOR_PROFILE="${A2_COLLISION_MONITOR_PROFILE:-strict}"
 STOP_EXISTING=1
@@ -29,24 +29,19 @@ RECORD_SCRIPT="${WORKSPACE}/src/a2_system/scripts/append_3d_test_record.py"
 usage() {
   cat <<EOF
 Usage:
-  $(basename "$0") [--mode standby] [--lidar-iface net1]
+  $(basename "$0") [--mode auto] [--lidar-iface net1]
   $(basename "$0") --mode auto [--lidar-iface net1] [--sdk-iface eth0]
   $(basename "$0") --mode mapping [--lidar-iface net1]
   $(basename "$0") --mode navigation --map-id MAP_ID [--lidar-iface net1] [--sdk-iface eth0] [--localization-mode ndt|odom_only] [--collision-profile strict|live-validation] [--enable-motion] [--live-motion]
 
-Default behavior:
-  Starts the Web backend directly and leaves Web stack state as "stopped".
-  Open the Web page and choose mapping or navigation yourself.
-
 Auto behavior:
   Finds the newest 3D pointcloud map under runtime/maps.
-  - If found, starts navigation in dry-run mode.
+  - If found, starts navigation with real Unitree motion.
   - If not found, starts mapping mode.
   - Runs preflight and appends a CSV test record when navigation starts.
 
 Safety:
-  --mode navigation defaults to dry-run.
-  Physical /cmd_vel output requires both --enable-motion and --live-motion.
+  Navigation defaults to real /cmd_vel output. Keep the robot supervised.
   live-validation collision profile is only for supervised open-space tests.
 EOF
 }
@@ -413,7 +408,7 @@ run_navigation_preflight_and_record() {
     --near-collision-count 0 \
     --estop-count 0 \
     --notes "$notes" \
-    --next-action "review preflight and corridor gate before enabling live motion"
+    --next-action "monitor live-motion run and review preflight/corridor gate artifacts"
 
   if [[ "$LIVE_MOTION" == "true" && "$result" != "PASS" ]]; then
     stop_owned_robot_stack
@@ -449,6 +444,4 @@ echo
 show_urls
 if [[ "$MODE" == "standby" ]]; then
   log "Standby ready: Web should show stopped. Choose mapping or navigation in the UI."
-elif [[ "$MODE" == "navigation" && "$LIVE_MOTION" != "true" ]]; then
-  log "Navigation is running in dry-run mode. Use --live-motion only after confirming the area is clear."
 fi

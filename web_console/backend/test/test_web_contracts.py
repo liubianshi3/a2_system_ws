@@ -21,11 +21,13 @@ from backend.models import (
     TaskRouteStatus,
     VirtualObstacleListing,
     VirtualObstacleZone,
+    StartNavigationRequest,
 )
 from backend.stack_control import (
     MAPPING_NODES,
     NAVIGATION_NODES,
     NAVIGATION_NODES_3D,
+    NAVIGATION_MOTION_MODES,
     STACK_CLEANUP_PATTERNS,
     StackController,
 )
@@ -98,6 +100,25 @@ def test_zbe_jt128_navigation_starts_live_motion_not_dry_run():
 
     assert "--enable-motion" in command
     assert "--live-motion" in command
+
+
+def test_default_navigation_requests_are_live_motion():
+    request = StartNavigationRequest(map_id="real_map")
+
+    assert request.motion_mode == "live_motion"
+    assert "dry_run" not in NAVIGATION_MOTION_MODES
+
+
+def test_a2_docker_defaults_start_real_live_motion():
+    repo_root = Path(__file__).resolve().parents[3]
+    compose_source = (repo_root / "docker-compose.a2.yml").read_text(encoding="utf-8")
+    entrypoint_source = (repo_root / "docker/entrypoint.sh").read_text(encoding="utf-8")
+
+    assert "A2_DOCKER_START_MODE: ${A2_DOCKER_START_MODE:-auto}" in compose_source
+    assert "A2_ENABLE_MOTION: ${A2_ENABLE_MOTION:-true}" in compose_source
+    assert "A2_LIVE_MOTION: ${A2_LIVE_MOTION:-true}" in compose_source
+    assert 'local enable_motion="${A2_ENABLE_MOTION:-true}"' in entrypoint_source
+    assert 'local live_motion="${A2_LIVE_MOTION:-true}"' in entrypoint_source
 
 
 def test_sim_config_uses_direct_cmd_vel_navigation_for_sim():

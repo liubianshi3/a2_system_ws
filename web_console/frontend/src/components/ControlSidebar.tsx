@@ -272,7 +272,6 @@ export function MapManagementSection({
             onChange={(event) => onMotionModeChange(event.target.value)}
           >
             <option value="planning_only">只跑规划/定位</option>
-            <option value="dry_run">Dry-run 控制桥</option>
             <option value="live_motion">Live-motion 真机</option>
           </select>
         </div>
@@ -304,9 +303,7 @@ export function MapManagementSection({
           ? collisionMonitorProfile === "live-validation"
             ? "Live-validation 会放宽近场点数门，仅限空阔现场人工看护验证。"
             : "Live-motion 会允许真实控制链输出，启动前必须确认现场安全。"
-          : motionMode === "dry_run"
-            ? "Dry-run 会启动控制桥但保持 mock，用于 Web 闭环验证。"
-            : "只跑定位、地图和规划组件，不启动真实运动链。"}
+          : "只跑定位、地图和规划组件，不启动真实运动链。"}
       </div>
       <label className="form-label" htmlFor="save-map-id">
         新地图名

@@ -102,7 +102,7 @@ NAVIGATION_NODES_3D: list[tuple[str, str, PatternSpec]] = [
 ]
 
 NAVIGATION_LOCALIZATION_MODES = {"ndt", "odom_only"}
-NAVIGATION_MOTION_MODES = {"planning_only", "dry_run", "live_motion"}
+NAVIGATION_MOTION_MODES = {"planning_only", "live_motion"}
 NAVIGATION_COLLISION_MONITOR_PROFILES = {"strict", "live-validation"}
 
 STACK_CLEANUP_PATTERNS = [
@@ -237,7 +237,7 @@ class StackController:
         map_id: str | None = None,
         *,
         localization_mode: str = "ndt",
-        motion_mode: str = "dry_run",
+        motion_mode: str = "live_motion",
         enable_nav2_3d: bool = True,
         collision_monitor_profile: str = "strict",
     ) -> list[str]:
@@ -262,7 +262,7 @@ class StackController:
                     collision_monitor_profile,
                 ])
                 command.append("--enable-nav2-3d" if enable_nav2_3d else "--no-nav2-3d")
-                if motion_mode in {"dry_run", "live_motion"}:
+                if motion_mode == "live_motion":
                     command.append("--enable-motion")
                 if motion_mode == "live_motion":
                     command.append("--live-motion")
@@ -285,7 +285,7 @@ class StackController:
                         collision_monitor_profile,
                         "--no-web",
                     ]
-                    if motion_mode in {"dry_run", "live_motion"}:
+                    if motion_mode == "live_motion":
                         command.append("--enable-motion")
                     if motion_mode == "live_motion":
                         command.append("--live-motion")
@@ -366,7 +366,7 @@ class StackController:
         map_id: str,
         *,
         localization_mode: str = "ndt",
-        motion_mode: str = "dry_run",
+        motion_mode: str = "live_motion",
         enable_nav2_3d: bool = True,
         collision_monitor_profile: str = "strict",
     ) -> dict[str, str]:
@@ -393,7 +393,7 @@ class StackController:
             selected_map_yaml=map_info.map_yaml,
             localization_mode=localization_mode,
             motion_mode=motion_mode,
-            enable_motion=motion_mode in {"dry_run", "live_motion"},
+            enable_motion=motion_mode == "live_motion",
             live_motion=motion_mode == "live_motion",
             dry_run=motion_mode != "live_motion",
             enable_nav2_3d=enable_nav2_3d,
@@ -439,7 +439,7 @@ class StackController:
             selected_map_yaml=map_info.map_yaml,
             localization_mode=localization_mode,
             motion_mode=motion_mode,
-            enable_motion=motion_mode in {"dry_run", "live_motion"},
+            enable_motion=motion_mode == "live_motion",
             live_motion=motion_mode == "live_motion",
             dry_run=motion_mode != "live_motion",
             enable_nav2_3d=enable_nav2_3d,
@@ -464,7 +464,7 @@ class StackController:
         return mode
 
     def _normalize_motion_mode(self, value: str) -> str:
-        mode = (value or "dry_run").strip()
+        mode = (value or "live_motion").strip()
         if mode not in NAVIGATION_MOTION_MODES:
             raise StackControlError(f"不支持的运动模式: {value}")
         return mode

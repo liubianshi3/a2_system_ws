@@ -121,7 +121,7 @@ export async function startNavigationStack(
     body: JSON.stringify({
       map_id: mapId,
       localization_mode: options?.localization_mode ?? "ndt",
-      motion_mode: options?.motion_mode ?? "dry_run",
+      motion_mode: options?.motion_mode ?? "live_motion",
       enable_nav2_3d: options?.enable_nav2_3d ?? true,
       collision_monitor_profile: options?.collision_monitor_profile ?? "strict",
     }),

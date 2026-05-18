@@ -18,8 +18,8 @@ services:
       CONFIG_PATH: /opt/a2_system_ws/web_console/backend/config.docker.zbe.yaml
       ROS_DOMAIN_ID: "88"
       RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
-      # Default to Web-only. Operators choose mapping/navigation from the Web UI.
-      A2_DOCKER_START_MODE: standby
+      # Default to real robot startup: latest map -> navigation, otherwise mapping.
+      A2_DOCKER_START_MODE: auto
       A2_NAV_MAP_ID: ""
       A2_NETWORK_INTERFACE: eth0
       A2_JT128_INTERFACE: net1
@@ -47,9 +47,8 @@ services:
       A2_CONTROL_MAX_LINEAR_Y: "0.18"
       A2_CONTROL_MAX_YAW_RATE: "0.45"
       A2_CONTROL_CMD_TIMEOUT_SEC: "0.30"
-      # Physical motion stays off unless both are explicitly enabled.
-      A2_ENABLE_MOTION: "false"
-      A2_LIVE_MOTION: "false"
+      A2_ENABLE_MOTION: "true"
+      A2_LIVE_MOTION: "true"
       A2_STACK_REQUIRED: "false"
     volumes:
       - /home/unitree/ws/zbe/device-navigation/runtime/maps:/opt/a2_system_ws/runtime/maps

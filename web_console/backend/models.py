@@ -135,7 +135,7 @@ class InitialPoseRequest(BaseModel):
 class StartNavigationRequest(BaseModel):
     map_id: str
     localization_mode: str = "ndt"
-    motion_mode: str = "dry_run"
+    motion_mode: str = "live_motion"
     enable_nav2_3d: bool = True
     collision_monitor_profile: str = "strict"
 

@@ -263,7 +263,7 @@ export default function App() {
   const [activeDrawer, setActiveDrawer] = useState<DrawerKey>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("auto");
   const [localizationMode, setLocalizationMode] = useState("ndt");
-  const [motionMode, setMotionMode] = useState("dry_run");
+  const [motionMode, setMotionMode] = useState("live_motion");
   const [enableNav2_3d, setEnableNav2_3d] = useState(true);
   const [collisionMonitorProfile, setCollisionMonitorProfile] = useState("strict");
   const [showMediaDock, setShowMediaDock] = useState(true);
@@ -667,9 +667,7 @@ export default function App() {
     const motionText =
       motionMode === "live_motion"
         ? "LIVE-MOTION 真机运动"
-        : motionMode === "dry_run"
-          ? "dry-run 控制桥验证"
-          : "只跑规划/定位";
+        : "只跑规划/定位";
     if (
       !window.confirm(
         `启动导航模式会停止当前栈并加载地图 ${selectedMapId}，模式=${localizationMode}/${motionText}，collision=${collisionMonitorProfile}。确认继续？`,
