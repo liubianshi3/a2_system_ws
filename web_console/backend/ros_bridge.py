@@ -4,6 +4,7 @@ import threading
 import base64
 import io
 import json
+import logging
 import math
 import struct
 import time
@@ -27,6 +28,9 @@ try:
     from PIL import Image as PilImage
 except ImportError:  # pragma: no cover - optional runtime dependency
     PilImage = None
+
+
+logger = logging.getLogger(__name__)
 
 try:
     from a2_interfaces.msg import RobotState
@@ -675,30 +679,35 @@ class RosBridgeNode(Node):
     ) -> Any:
         if self.task_command_client is None or NavCommand is None:
             raise RosBridgeError("task_manager service client 不可用")
-        if not self.task_command_client.wait_for_service(timeout_sec=2.0):
-            raise RosBridgeError("task_manager service 不可用")
+        try:
+            if not self.task_command_client.wait_for_service(timeout_sec=2.0):
+                raise RosBridgeError("task_manager service 不可用")
 
-        request = NavCommand.Request()
-        request.command = command
-        request.map_id = map_id
-        request.route_id = route_id
-        request.mode = mode
-        request.mission_name = mission_name
-        request.route_yaml = route_yaml
-        request.waypoints_file = waypoints_file
-        request.dry_run = bool(dry_run)
-        request.stop_on_failure = bool(stop_on_failure)
-        request.save_map_on_finish = bool(save_map_on_finish)
-        request.save_map_on_failure = bool(save_map_on_failure)
-        if pose is not None:
-            request.pose = pose
+            request = NavCommand.Request()
+            request.command = command
+            request.map_id = map_id
+            request.route_id = route_id
+            request.mode = mode
+            request.mission_name = mission_name
+            request.route_yaml = route_yaml
+            request.waypoints_file = waypoints_file
+            request.dry_run = bool(dry_run)
+            request.stop_on_failure = bool(stop_on_failure)
+            request.save_map_on_finish = bool(save_map_on_finish)
+            request.save_map_on_failure = bool(save_map_on_failure)
+            if pose is not None:
+                request.pose = pose
 
-        future = self.task_command_client.call_async(request)
-        done = threading.Event()
-        future.add_done_callback(lambda _: done.set())
-        if not done.wait(timeout=8.0):
-            raise RosBridgeError(f"task_manager {command} 超时")
-        response = future.result()
+            future = self.task_command_client.call_async(request)
+            done = threading.Event()
+            future.add_done_callback(lambda _: done.set())
+            if not done.wait(timeout=8.0):
+                raise RosBridgeError(f"task_manager {command} 超时")
+            response = future.result()
+        except RosBridgeError:
+            raise
+        except Exception as exc:
+            raise RosBridgeError(f"task_manager {command} 调用失败: {exc}") from exc
         if response is None:
             raise RosBridgeError(f"task_manager {command} 未返回结果")
         if not response.success:
@@ -2166,5 +2175,8 @@ class RosRuntime:
             self.node.destroy_node()
         if self.thread is not None and self.thread.is_alive():
             self.thread.join(timeout=2.0)
-        rclpy.shutdown()
+        try:
+            rclpy.shutdown()
+        except Exception as exc:
+            logger.warning("rclpy shutdown skipped: %s", exc)
         self._started = False
