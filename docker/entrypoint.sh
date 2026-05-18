@@ -56,6 +56,7 @@ start_standby_control_bridge() {
   local ld_preload="${A2_CONTROL_BRIDGE_LD_PRELOAD:-}"
   local env_args=()
 
+  env_args+=("RMW_IMPLEMENTATION=${A2_UNITREE_RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}")
   if [[ -n "$ld_preload" ]]; then
     env_args+=("LD_PRELOAD=${ld_preload}")
   fi
@@ -100,6 +101,7 @@ start_standby_sdk_bridge() {
   local ld_preload="${A2_SDK_BRIDGE_LD_PRELOAD:-${A2_CONTROL_BRIDGE_LD_PRELOAD:-}}"
   local env_args=()
 
+  env_args+=("RMW_IMPLEMENTATION=${A2_UNITREE_RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}")
   if [[ -n "$ld_preload" ]]; then
     env_args+=("LD_PRELOAD=${ld_preload}")
   fi

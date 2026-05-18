@@ -20,6 +20,11 @@ from launch_ros.parameter_descriptions import ParameterValue
 
 
 def _unitree_ddsc_env():
+    env = {
+        # Keep Unitree SDK2's CycloneDDS participant out of the ROS 2 CycloneDDS
+        # process path; otherwise SDK2 can fail creating DDS domain 0 explicitly.
+        "RMW_IMPLEMENTATION": os.environ.get("A2_UNITREE_RMW_IMPLEMENTATION", "rmw_fastrtps_cpp"),
+    }
     candidates = [
         "/opt/unitree_robotics/lib/x86_64/libddsc.so.0",
         "/unitree/opt/lib/libddsc.so.0",
@@ -29,8 +34,9 @@ def _unitree_ddsc_env():
             continue
         current = os.environ.get("LD_PRELOAD", "").strip()
         preload = candidate if not current else f"{candidate}:{current}"
-        return {"LD_PRELOAD": preload}
-    return {}
+        env["LD_PRELOAD"] = preload
+        return env
+    return env
 
 
 def _pointcloud_guard_action():

@@ -121,6 +121,17 @@ def test_a2_docker_defaults_start_real_live_motion():
     assert 'local live_motion="${A2_LIVE_MOTION:-true}"' in entrypoint_source
 
 
+def test_unitree_bridge_nodes_use_fastrtps_rmw():
+    repo_root = Path(__file__).resolve().parents[3]
+    nav_launch = (repo_root / "src/a2_bringup/launch/jt128_3d_navigation.launch.py").read_text(encoding="utf-8")
+    legacy_launch = (repo_root / "src/a2_bringup/launch/bringup.launch.py").read_text(encoding="utf-8")
+    entrypoint_source = (repo_root / "docker/entrypoint.sh").read_text(encoding="utf-8")
+
+    assert '"RMW_IMPLEMENTATION": os.environ.get("A2_UNITREE_RMW_IMPLEMENTATION", "rmw_fastrtps_cpp")' in nav_launch
+    assert '"RMW_IMPLEMENTATION": os.environ.get("A2_UNITREE_RMW_IMPLEMENTATION", "rmw_fastrtps_cpp")' in legacy_launch
+    assert "A2_UNITREE_RMW_IMPLEMENTATION:-rmw_fastrtps_cpp" in entrypoint_source
+
+
 def test_sim_config_uses_direct_cmd_vel_navigation_for_sim():
     config = load_config(Path(__file__).resolve().parents[1] / "config.sim.yaml")
 
