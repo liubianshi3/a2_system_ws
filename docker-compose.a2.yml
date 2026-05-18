@@ -1,6 +1,7 @@
 services:
   a2-system-ws:
-    image: ${A2_DOCKER_IMAGE:-device-navigation-a2:zbe}
+    container_name: ${A2_CONTAINER_NAME:-nav-dev}
+    image: ${A2_DOCKER_IMAGE:-nav:dev}
     init: true
     build:
       context: .
