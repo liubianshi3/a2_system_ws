@@ -611,6 +611,7 @@ def test_websocket_pointcloud_uses_lightweight_preview():
 
     assert "websocket_pointcloud_max_points" in config
     assert "def _websocket_pointcloud_snapshot" in bridge
+    assert "round(float(point[0]), 3)" in bridge
     assert 'self._publish("pointcloud", dump_model(self._websocket_pointcloud_snapshot(self.pointcloud_snapshot)))' in bridge
     assert "snapshot.pointcloud = node._websocket_pointcloud_snapshot(snapshot.pointcloud)" in main
 

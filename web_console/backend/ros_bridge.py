@@ -1555,10 +1555,11 @@ class RosBridgeNode(Node):
 
     def _websocket_pointcloud_snapshot(self, snapshot: PointCloudSnapshot) -> PointCloudSnapshot:
         max_points = max(100, int(self.config.ros.websocket_pointcloud_max_points))
-        if len(snapshot.points) <= max_points:
-            return snapshot
         stride = max(1, int(math.ceil(len(snapshot.points) / max_points)))
-        points = snapshot.points[::stride]
+        points = [
+            [round(float(point[0]), 3), round(float(point[1]), 3), round(float(point[2]), 3)]
+            for point in snapshot.points[::stride]
+        ]
         return snapshot.model_copy(
             update={
                 "points": points,
