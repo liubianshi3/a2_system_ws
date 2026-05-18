@@ -542,7 +542,7 @@ export function ManualControlSection({
           启动运动授权
         </button>
       </div>
-      <div className="status-grid compact-status-grid">
+      <div className="manual-auth-grid">
         <StatusMini label="auth" value={motionAuthorization?.state ?? "—"} />
         <StatusMini label="standing" value={motionAuthorization ? String(motionAuthorization.standing) : "—"} />
         <StatusMini label="motion" value={motionAuthorization ? String(motionAuthorization.motion_authorized) : "—"} />

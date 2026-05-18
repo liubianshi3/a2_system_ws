@@ -148,6 +148,22 @@ def test_jt128_navigation_starts_live_motion_not_dry_run():
     assert "--live-motion" in command
 
 
+def test_jt128_mapping_still_uses_lidar_interface_from_stack_config():
+    config = load_config(Path(__file__).resolve().parents[1] / "config.3d.yaml")
+    command = StackController(config)._start_script_command("mapping", "")
+
+    assert config.stack.network_interface == "net1"
+    assert Path(command[0]).name == "start_jt128_3d_stack.sh"
+    assert command[1:] == [
+        "--mode",
+        "mapping",
+        "--lidar-iface",
+        "net1",
+        "--no-web",
+    ]
+    assert "eth0" not in command
+
+
 def test_manual_control_standby_uses_unitree_sdk_interface_by_default(monkeypatch):
     monkeypatch.delenv("A2_SDK_INTERFACE", raising=False)
     monkeypatch.delenv("A2_CONTROL_INTERFACE", raising=False)

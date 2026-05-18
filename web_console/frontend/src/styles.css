@@ -99,6 +99,29 @@ button:disabled {
   margin-top: 10px;
 }
 
+.manual-auth-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.manual-auth-grid .status-row {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+  align-items: center;
+  padding: 6px 0;
+}
+
+.manual-auth-grid .status-value {
+  min-width: 0;
+  text-align: left;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .legacy-console-shell {
   min-height: 100%;
   display: flex;

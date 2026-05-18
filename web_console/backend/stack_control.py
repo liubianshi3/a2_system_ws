@@ -240,15 +240,10 @@ class StackController:
         }
 
     def _standby_sdk_interface(self) -> str:
-        return os.environ.get("A2_SDK_INTERFACE") or self.config.stack.network_interface or "net1"
+        return os.environ.get("A2_SDK_INTERFACE") or "eth0"
 
     def _standby_control_interface(self) -> str:
-        return (
-            os.environ.get("A2_CONTROL_INTERFACE")
-            or os.environ.get("A2_SDK_INTERFACE")
-            or self.config.stack.network_interface
-            or "net1"
-        )
+        return os.environ.get("A2_CONTROL_INTERFACE") or self._standby_sdk_interface()
 
     def _manual_control_standby_mismatches(
         self,
