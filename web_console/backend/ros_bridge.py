@@ -180,6 +180,32 @@ def _localization_pose_update_seen(current_stamp: str | None, previous_stamp: st
     return current_stamp is not None and current_stamp != previous_stamp
 
 
+def _preview_sample_indices(total_points: int, max_points: int) -> range | list[int]:
+    if total_points <= 0:
+        return range(0)
+    if max_points <= 0 or total_points <= max_points:
+        return range(total_points)
+
+    stride = _coprime_preview_stride(total_points)
+    indices = [(sample_index * stride) % total_points for sample_index in range(max_points)]
+    indices.sort()
+    return indices
+
+
+def _coprime_preview_stride(total_points: int) -> int:
+    if total_points <= 2:
+        return 1
+
+    candidate = max(1, min(total_points - 1, int(total_points * 0.61803398875)))
+    for _ in range(total_points):
+        if math.gcd(candidate, total_points) == 1:
+            return candidate
+        candidate += 1
+        if candidate >= total_points:
+            candidate = 1
+    return 1
+
+
 def _cell_has_clearance(
     map_snapshot: MapSnapshot,
     grid_x: int,
@@ -1556,10 +1582,10 @@ class RosBridgeNode(Node):
     def _websocket_pointcloud_snapshot(self, snapshot: PointCloudSnapshot) -> PointCloudSnapshot:
         max_points = max(100, int(self.config.ros.websocket_pointcloud_max_points))
         stride = max(1, int(math.ceil(len(snapshot.points) / max_points)))
-        points = [
-            [round(float(point[0]), 3), round(float(point[1]), 3), round(float(point[2]), 3)]
-            for point in snapshot.points[::stride]
-        ]
+        points: list[list[float]] = []
+        for point_index in _preview_sample_indices(len(snapshot.points), max_points):
+            point = snapshot.points[point_index]
+            points.append([round(float(point[0]), 3), round(float(point[1]), 3), round(float(point[2]), 3)])
         return snapshot.model_copy(
             update={
                 "points": points,
@@ -1596,7 +1622,7 @@ class RosBridgeNode(Node):
         unpack_float = struct.Struct(f"{endian}f").unpack_from
         raw = memoryview(msg.data)
         points: list[list[float]] = []
-        for point_index in range(0, total_points, sample_stride):
+        for point_index in _preview_sample_indices(total_points, max_points):
             base = point_index * msg.point_step
             x = unpack_float(raw, base + x_field.offset)[0]
             y = unpack_float(raw, base + y_field.offset)[0]

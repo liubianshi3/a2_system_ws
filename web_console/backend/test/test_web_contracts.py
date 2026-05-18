@@ -80,6 +80,8 @@ def test_3d_config_uses_source_workspace_defaults():
     assert config.stack.map_root == "/home/unitree/ws/device-navigation/runtime/maps"
     assert config.stack.start_script == "/home/unitree/ws/device-navigation/src/a2_system/tools/start_jt128_3d_stack.sh"
     assert config.stack.stop_script == "/home/unitree/ws/device-navigation/src/a2_system/tools/stop_jt128_stack.sh"
+    assert config.ros.pointcloud_preview_max_points >= 60000
+    assert config.ros.websocket_pointcloud_max_points >= 48000
 
 
 def test_a2_workspace_env_overrides_3d_stack_paths(monkeypatch):
@@ -615,7 +617,11 @@ def test_websocket_pointcloud_uses_lightweight_preview():
 
     assert "websocket_pointcloud_max_points" in config
     assert "def _websocket_pointcloud_snapshot" in bridge
+    assert "def _preview_sample_indices" in bridge
+    assert "def _coprime_preview_stride" in bridge
     assert "round(float(point[0]), 3)" in bridge
+    assert "_preview_sample_indices(len(snapshot.points), max_points)" in bridge
+    assert "_preview_sample_indices(total_points, max_points)" in bridge
     assert 'self._publish("pointcloud", dump_model(self._websocket_pointcloud_snapshot(self.pointcloud_snapshot)))' in bridge
     assert "snapshot.pointcloud = node._websocket_pointcloud_snapshot(snapshot.pointcloud)" in main
 
