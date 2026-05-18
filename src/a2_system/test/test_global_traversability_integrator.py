@@ -49,7 +49,11 @@ def _make_grid(
 # Import the pure-Python class under test (does not require ROS).
 import sys
 sys.path.insert(0, "src/a2_system/scripts")
-from global_traversability_integrator import GlobalTraversabilityMemory
+from global_traversability_integrator import (
+    GlobalTraversabilityMemory,
+    validate_frame,
+    should_update_with_tf,
+)
 
 
 class TestGlobalTraversabilityMemory(unittest.TestCase):
@@ -224,6 +228,92 @@ class TestGlobalTraversabilityMemory(unittest.TestCase):
         memory.apply_decay()
         pts = memory.get_stable_obstacle_points()
         self.assertGreater(len(pts), 0)
+
+    def test_get_stable_obstacle_cells_returns_cellstate(self):
+        """get_stable_obstacle_cells returns CellState objects with col, row."""
+        memory = GlobalTraversabilityMemory(
+            min_observations=2,
+            min_confidence=0.5,
+            confidence_increment=0.6,
+            local_update_window_enabled=False,
+        )
+        grid = _make_grid([[100]])
+        for _ in range(2):
+            memory.update(grid)
+        memory.apply_decay()
+        cells = memory.get_stable_obstacle_cells()
+        self.assertGreaterEqual(len(cells), 1)
+        cell = cells[0]
+        self.assertEqual(cell.col, 0)
+        self.assertEqual(cell.row, 0)
+        self.assertGreater(cell.high_cost_count, 0)
+
+    def test_build_stable_costmap_output(self):
+        """build_stable_costmap sets stable cells to 100, others to 0."""
+        memory = GlobalTraversabilityMemory(
+            min_observations=2,
+            min_confidence=0.5,
+            confidence_increment=0.6,
+            local_update_window_enabled=False,
+        )
+        grid = _make_grid([[0, 0], [0, 100]])
+        for _ in range(3):
+            memory.update(grid)
+        memory.apply_decay()
+        costmap = memory.build_stable_costmap()
+        self.assertIsNotNone(costmap)
+        self.assertEqual(costmap.header.frame_id, "map")
+        data = list(costmap.data)
+        # Cell (1,0)=100 is index 1*2+0=2, Cell (1,1)=100 is index 1*2+1=3
+        # Wait - the 100 cell is at col 1, row 1 (since python list: grid[1][1]=100)
+        # Flattened row-major: row=1, col=1 → index=1*2+1=3
+        # The grid was: [[0,0],[0,100]] i.e. row0=[0,0], row1=[0,100]
+        # So cell (row=1, col=1) with value 100
+        self.assertEqual(data[3], 100)
+        # Other cells should be 0
+        self.assertEqual(data[0], 0)
+        self.assertEqual(data[1], 0)
+        self.assertEqual(data[2], 0)
+
+    def test_build_stable_costmap_no_grid(self):
+        """build_stable_costmap returns None when no grid received."""
+        memory = GlobalTraversabilityMemory()
+        self.assertIsNone(memory.build_stable_costmap())
+
+
+class TestValidateFrame(unittest.TestCase):
+    def test_empty_frame(self):
+        ok, reason = validate_frame("", "map")
+        self.assertFalse(ok)
+        self.assertIn("empty", reason)
+
+    def test_match(self):
+        ok, reason = validate_frame("map", "map")
+        self.assertTrue(ok)
+
+    def test_mismatch(self):
+        ok, reason = validate_frame("base_link", "map")
+        self.assertFalse(ok)
+        self.assertIn("mismatch", reason)
+
+    def test_whitespace_tolerance(self):
+        ok, _ = validate_frame("  map  ", "map")
+        self.assertTrue(ok)
+
+
+class TestShouldUpdateWithTf(unittest.TestCase):
+    def test_local_window_off_always_updates(self):
+        should, _ = should_update_with_tf(False, False)
+        self.assertTrue(should)
+
+    def test_local_window_on_tf_ok_updates(self):
+        should, _ = should_update_with_tf(True, True)
+        self.assertTrue(should)
+
+    def test_local_window_on_tf_fail_blocks(self):
+        should, reason = should_update_with_tf(True, False)
+        self.assertFalse(should)
+        self.assertIn("waiting_tf", reason)
 
 
 if __name__ == "__main__":

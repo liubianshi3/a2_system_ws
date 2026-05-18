@@ -47,8 +47,8 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "global_traversability_config",
-            default_value="",
-            description="Optional path to global_traversability_integrator YAML config.",
+            default_value=f"{a2_system_share}/config/global_traversability_integrator.yaml",
+            description="Path to global_traversability_integrator YAML config.",
         ),
 
         LogInfo(
@@ -101,13 +101,6 @@ def generate_launch_description():
                 "local_max_x": 6.0,
                 "local_min_y": -4.0,
                 "local_max_y": 4.0,
-                "self_filter_enabled": True,
-                "self_filter_min_x": -0.70,
-                "self_filter_max_x": 0.95,
-                "self_filter_min_y": -0.55,
-                "self_filter_max_y": 0.55,
-                "self_filter_min_z": -0.30,
-                "self_filter_max_z": 0.90,
                 "max_output_points": 20000,
                 "use_sim_time": use_sim_time,
             }],

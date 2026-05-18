@@ -51,6 +51,7 @@ install(PROGRAMS
   tools/stop_stack.sh
   tools/stop_jt128_stack.sh
   tools/setup_unitree_dds.sh
+  scripts/global_traversability_integrator.py
   tools/map_quality/check_map_quality.py
   DESTINATION share/${PROJECT_NAME})
 

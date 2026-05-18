@@ -5,14 +5,10 @@ Subscribes to /a2/traversability (OccupancyGrid, frame map) and applies
 temporal cooldown filtering before publishing verified obstacles as a
 PointCloud2 layer for Nav2 global_costmap.
 
-Design:
-  - Unknown cells (value == -1) are ignored by default (unknown_policy=ignore).
-  - Single-frame high-cost cells are NOT forwarded — only cells that have been
-    observed as high-cost across *min_observations* frames with confidence >=
-    *min_confidence* are emitted.
-  - Stale cells are cleared after *stale_clear_sec* without observation.
-  - Confidence decays over time for cells not currently observed as high-cost.
-  - local_update_window limits processing to a radius around the robot pose.
+Field hardening:
+  - TF unavailable → skip memory update, publish empty cloud, status tf_error.
+  - Frame mismatch → skip memory update, status frame_error.
+  - Costmap output published for debugging on /a2/global_traversability/costmap.
 """
 
 from __future__ import annotations
@@ -20,13 +16,13 @@ from __future__ import annotations
 import math
 import time
 from collections import OrderedDict
-from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Tuple
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import rclpy
 from geometry_msgs.msg import TransformStamped
-from nav_msgs.msg import OccupancyGrid, Odometry
+from nav_msgs.msg import MapMetaData, OccupancyGrid, Odometry
 from rclpy.duration import Duration
 from rclpy.node import Node
 from sensor_msgs.msg import PointCloud2, PointField
@@ -37,6 +33,8 @@ from tf2_ros import Buffer, TransformException, TransformListener
 
 @dataclass
 class CellState:
+    col: int
+    row: int
     x: float
     y: float
     observation_count: int = 0
@@ -71,6 +69,32 @@ class IntegratorStats:
             f"dropped_unknown_cells={self.dropped_unknown_cells};output_points={self.output_points};"
             f"last_publish_age_sec={self.last_publish_age_sec:.2f}"
         )
+
+
+def validate_frame(input_frame_id: str, expected_frame_id: str) -> Tuple[bool, str]:
+    """Pure function: check that input frame matches expected frame.
+
+    Returns (ok, reason).  ok=False means the grid must not be consumed.
+    """
+    inp = (input_frame_id or "").strip()
+    exp = (expected_frame_id or "").strip()
+    if not inp:
+        return False, "empty_input_frame"
+    if inp != exp:
+        return False, f"frame_mismatch:{inp}!={exp}"
+    return True, "ok"
+
+
+def should_update_with_tf(local_window_enabled: bool, tf_ok: bool) -> Tuple[bool, str]:
+    """Pure function: decide whether to update memory given TF state.
+
+    Returns (should_update, reason).
+    """
+    if not local_window_enabled:
+        return True, "ok"
+    if tf_ok:
+        return True, "ok"
+    return False, "waiting_tf"
 
 
 class GlobalTraversabilityMemory:
@@ -113,6 +137,14 @@ class GlobalTraversabilityMemory:
     def stats(self) -> IntegratorStats:
         return self._stats
 
+    @property
+    def last_grid(self) -> Optional[OccupancyGrid]:
+        return self._last_grid
+
+    @property
+    def last_grid_time(self) -> float:
+        return self._last_grid_time
+
     def update(self, grid: OccupancyGrid, robot_x: float = 0.0, robot_y: float = 0.0) -> None:
         now = time.monotonic()
         self._last_grid = grid
@@ -139,7 +171,6 @@ class GlobalTraversabilityMemory:
                     if self.unknown_policy == "ignore":
                         dropped_unknown += 1
                         continue
-                    # unknown_policy != "ignore" → treat as potential obstacle
                     value = 99
 
                 cell_x = origin_x + (col + 0.5) * resolution
@@ -153,7 +184,7 @@ class GlobalTraversabilityMemory:
                 key = (col, row)
                 cell = self._cells.get(key)
                 if cell is None:
-                    cell = CellState(x=cell_x, y=cell_y)
+                    cell = CellState(col=col, row=row, x=cell_x, y=cell_y)
                     self._cells[key] = cell
 
                 cell.observation_count += 1
@@ -189,35 +220,57 @@ class GlobalTraversabilityMemory:
         self._stats.stale_cells = len(stale_keys)
         self._stats.known_cells = len(self._cells)
 
-    def get_stable_obstacle_points(self) -> np.ndarray:
+    def get_stable_obstacle_cells(self) -> List[CellState]:
+        """Return cells that meet stability criteria."""
         now = time.monotonic()
-        points = []
-        stable_count = 0
-
+        result: List[CellState] = []
         for key, cell in self._cells.items():
             stale = (now - cell.last_seen_time) > self.stale_clear_sec
             if stale:
                 continue
-
             is_stable = (
                 cell.high_cost_count >= self.min_observations
                 and cell.confidence >= self.min_confidence
                 and cell.high_cost_count > 0
             )
-
             if is_stable:
-                points.append((cell.x, cell.y, 0.15))
-                stable_count += 1
+                result.append(cell)
+        self._stats.stable_obstacle_cells = len(result)
+        return result
 
-        self._stats.stable_obstacle_cells = stable_count
+    def get_stable_obstacle_points(self) -> np.ndarray:
+        cells = self.get_stable_obstacle_cells()
+        points = [(cell.x, cell.y, 0.15) for cell in cells]
 
-        result = np.array(points, dtype=np.float32)
+        result = np.array(points, dtype=np.float32) if points else np.zeros((0, 3), dtype=np.float32)
         if self.max_points > 0 and len(result) > self.max_points:
             stride = max(1, int(math.ceil(len(result) / self.max_points)))
             result = result[::stride]
 
         self._stats.output_points = len(result)
         return result
+
+    def build_stable_costmap(self) -> Optional[OccupancyGrid]:
+        """Build an OccupancyGrid with stable obstacles set to 100, others 0."""
+        if self._last_grid is None:
+            return None
+
+        info = self._last_grid.info
+        width = info.width
+        height = info.height
+        if width == 0 or height == 0:
+            return None
+
+        data = [0] * (width * height)
+        for cell in self.get_stable_obstacle_cells():
+            if 0 <= cell.row < height and 0 <= cell.col < width:
+                data[cell.row * width + cell.col] = 100
+
+        grid = OccupancyGrid()
+        grid.header = Header(frame_id=self._stats.output_frame or "map")
+        grid.info = info
+        grid.data = data
+        return grid
 
     def set_ready(self) -> None:
         self._stats.ready = True
@@ -240,6 +293,15 @@ def _make_empty_pointcloud(stamp: rclpy.time.Time, frame_id: str) -> PointCloud2
     msg.row_step = 0
     msg.is_dense = True
     return msg
+
+
+def _make_empty_costmap(frame_id: str) -> OccupancyGrid:
+    grid = OccupancyGrid()
+    grid.header = Header(frame_id=frame_id)
+    grid.info = MapMetaData(resolution=0.1, width=1, height=1)
+    grid.info.origin.orientation.w = 1.0
+    grid.data = [0]
+    return grid
 
 
 class GlobalTraversabilityIntegrator(Node):
@@ -266,6 +328,9 @@ class GlobalTraversabilityIntegrator(Node):
             self.declare_parameter("transform_timeout_sec", 0.2).value
         )
         self._odom_topic = str(self.declare_parameter("odom_topic", "/odometry/local").value)
+        self._local_update_window_enabled = bool(
+            self.declare_parameter("local_update_window_enabled", True).value
+        )
 
         self._memory = GlobalTraversabilityMemory(
             high_cost_threshold=int(self.declare_parameter("high_cost_threshold", 90).value),
@@ -277,9 +342,7 @@ class GlobalTraversabilityIntegrator(Node):
             observation_decay_sec=float(self.declare_parameter("observation_decay_sec", 20.0).value),
             stale_clear_sec=float(self.declare_parameter("stale_clear_sec", 60.0).value),
             unknown_policy=str(self.declare_parameter("unknown_policy", "ignore").value),
-            local_update_window_enabled=bool(
-                self.declare_parameter("local_update_window_enabled", True).value
-            ),
+            local_update_window_enabled=self._local_update_window_enabled,
             local_update_radius_m=float(
                 self.declare_parameter("local_update_radius_m", 8.0).value
             ),
@@ -304,6 +367,7 @@ class GlobalTraversabilityIntegrator(Node):
             Odometry, self._odom_topic, self._on_odom, 10
         )
         self._obstacle_pub = self.create_publisher(PointCloud2, self._output_obstacle_topic, 10)
+        self._costmap_pub = self.create_publisher(OccupancyGrid, self._output_costmap_topic, 10)
         self._status_pub = self.create_publisher(String, self._status_topic, 10)
         self._timer = self.create_timer(1.0 / max(self._publish_hz, 0.1), self._publish)
 
@@ -313,10 +377,12 @@ class GlobalTraversabilityIntegrator(Node):
         self.get_logger().info(
             f"GlobalTraversabilityIntegrator started: "
             f"input={self._input_topic} output={self._output_obstacle_topic} "
-            f"frame={self._frame_id} min_obs={self._memory.min_observations} "
+            f"costmap={self._output_costmap_topic} frame={self._frame_id} "
+            f"min_obs={self._memory.min_observations} "
             f"min_conf={self._memory.min_confidence:.2f} "
             f"stale_clear={self._memory.stale_clear_sec:.0f}s "
-            f"unknown_policy={self._memory.unknown_policy}"
+            f"unknown_policy={self._memory.unknown_policy} "
+            f"local_window={self._local_update_window_enabled}"
         )
 
     def _lookup_robot_pose(self) -> Tuple[float, float, bool]:
@@ -335,8 +401,9 @@ class GlobalTraversabilityIntegrator(Node):
                 True,
             )
         except TransformException as exc:
-            if self._tf_fail_reason != str(exc):
-                self._tf_fail_reason = str(exc)
+            err_str = str(exc)
+            if self._tf_fail_reason != err_str:
+                self._tf_fail_reason = err_str
                 self.get_logger().warn(
                     f"TF lookup map→base_link failed: {self._tf_fail_reason}",
                     throttle_duration_sec=10.0,
@@ -344,33 +411,78 @@ class GlobalTraversabilityIntegrator(Node):
             self._tf_ok = False
             return self._last_robot_x, self._last_robot_y, False
 
+    def _validate_frame(self, msg: OccupancyGrid) -> bool:
+        input_frame = (msg.header.frame_id or "").strip()
+        expected = self._frame_id.strip()
+        if not input_frame:
+            self._memory._stats.state = "frame_error"
+            self._memory._stats.ready = False
+            self._memory._stats.reason = "empty_input_frame"
+            return False
+        if input_frame != expected:
+            self._memory._stats.state = "frame_error"
+            self._memory._stats.ready = False
+            self._memory._stats.reason = f"frame_mismatch:{input_frame}!={expected}"
+            self.get_logger().warn(
+                f"Frame mismatch: got '{input_frame}', expected '{expected}'. "
+                f"Grid will not be consumed.",
+                throttle_duration_sec=10.0,
+            )
+            return False
+        return True
+
     def _on_odom(self, msg: Odometry) -> None:
         pass  # Reserved for future use; primary pose source is TF.
 
     def _on_grid(self, msg: OccupancyGrid) -> None:
+        if not self._validate_frame(msg):
+            return
+
         rx, ry, tf_ok = self._lookup_robot_pose()
+
         if tf_ok:
             self._last_robot_x = rx
             self._last_robot_y = ry
+
+        should_update, reason = should_update_with_tf(
+            self._local_update_window_enabled, tf_ok
+        )
+        if not should_update:
+            self._memory._stats.state = "tf_error"
+            self._memory._stats.ready = False
+            self._memory._stats.reason = self._tf_fail_reason or reason
+            self._memory._stats.input_frame = msg.header.frame_id
+            self._memory._stats.output_frame = self._frame_id
+            return
 
         self._memory.update(msg, self._last_robot_x, self._last_robot_y)
         self._grid_count += 1
 
         if self._grid_count == 1:
             self._memory.set_ready()
-            self._memory._stats.reason = "first_grid"
+            self._memory._stats.reason = "ok"
 
     def _publish(self) -> None:
         now = time.monotonic()
 
-        # Update stats
         if self._memory._last_grid_time > 0:
             self._memory._stats.input_age_sec = now - self._memory._last_grid_time
-        self._memory._stats.last_publish_age_sec = now - self._last_publish_time if self._last_publish_time > 0 else 0.0
+        self._memory._stats.last_publish_age_sec = (
+            now - self._last_publish_time if self._last_publish_time > 0 else 0.0
+        )
 
-        if not self._tf_ok:
-            self._memory._stats.state = "tf_error"
-            self._memory._stats.reason = self._tf_fail_reason
+        # TF error → publish empty cloud for safety, but still apply decay.
+        if not self._tf_ok and self._local_update_window_enabled:
+            if self._memory._stats.state not in ("frame_error",):
+                self._memory._stats.state = "tf_error"
+                self._memory._stats.reason = self._tf_fail_reason or "waiting_tf"
+            self._memory.apply_decay()
+            stamp = self.get_clock().now().to_msg()
+            self._obstacle_pub.publish(_make_empty_pointcloud(stamp, self._frame_id))
+            self._costmap_pub.publish(_make_empty_costmap(self._frame_id))
+            self._status_pub.publish(String(data=self._memory._stats.status_string()))
+            self._last_publish_time = now
+            return
 
         self._memory.apply_decay()
         points = self._memory.get_stable_obstacle_points()
@@ -385,6 +497,14 @@ class GlobalTraversabilityIntegrator(Node):
                 Header(stamp=stamp, frame_id=self._frame_id), points.tolist()
             )
         self._obstacle_pub.publish(cloud)
+
+        # Publish costmap for debugging
+        costmap = self._memory.build_stable_costmap()
+        if costmap is not None:
+            costmap.header.stamp = stamp
+            self._costmap_pub.publish(costmap)
+        else:
+            self._costmap_pub.publish(_make_empty_costmap(self._frame_id))
 
         # Publish status
         self._status_pub.publish(String(data=self._memory._stats.status_string()))
