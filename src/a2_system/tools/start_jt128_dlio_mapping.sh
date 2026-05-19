@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-WORKSPACE="${A2_WORKSPACE:-/home/unitree/ws/device-navigation}"
+WORKSPACE="${A2_WORKSPACE:-$HOME/ws/device-navigation}"
 JT128_IFACE="${A2_JT128_INTERFACE:-net1}"
 JT128_IP="${A2_JT128_IP:-192.168.124.20}"
 GRAPH_PID_WS="${A2_GRAPH_PID_WS:-}"

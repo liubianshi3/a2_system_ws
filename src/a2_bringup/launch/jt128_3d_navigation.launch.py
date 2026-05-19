@@ -120,11 +120,11 @@ def generate_launch_description():
         [
             DeclareLaunchArgument("map_id", default_value=""),
             DeclareLaunchArgument("pcd_path", default_value=""),
-            DeclareLaunchArgument("map_root", default_value=os.environ.get("A2_WORKSPACE", str(Path.home() / "a2_system_ws")) + "/runtime/maps"),
+            DeclareLaunchArgument("map_root", default_value=os.environ.get("A2_WORKSPACE", str(Path.home() / "ws/device-navigation")) + "/runtime/maps"),
             DeclareLaunchArgument("start_static_tf", default_value="true"),
             DeclareLaunchArgument("start_robot_state", default_value="true"),
             DeclareLaunchArgument("start_task_manager", default_value="true"),
-            DeclareLaunchArgument("start_scan_mission", default_value="true"),
+            DeclareLaunchArgument("start_scan_mission", default_value="false"),
             DeclareLaunchArgument("start_ekf_local", default_value="true"),
             DeclareLaunchArgument(
                 "localization_mode",
@@ -297,27 +297,7 @@ def generate_launch_description():
                 ],
                 output="screen",
             ),
-            TimerAction(
-                period=18.0,
-                actions=[
-                    ExecuteProcess(
-                        cmd=[
-                            "bash",
-                            "-lc",
-                            (
-                                "for i in $(seq 1 20); do "
-                                "ros2 lifecycle get /collision_monitor 2>/dev/null | grep -q '^active' && exit 0; "
-                                "ros2 lifecycle set /collision_monitor configure || true; "
-                                "ros2 lifecycle set /collision_monitor activate || true; "
-                                "sleep 1; "
-                                "done; "
-                                "ros2 lifecycle get /collision_monitor || true"
-                            ),
-                        ],
-                        output="screen",
-                    )
-                ],
-            ),
+            # collision_monitor lifecycle is managed by lifecycle_manager_navigation (nav2_3d.yaml)
             # ── Battery publisher → /a2/battery ──
             Node(
                 package="a2_system",
@@ -338,7 +318,7 @@ def generate_launch_description():
                         "dry_run": ParameterValue(LaunchConfiguration("dry_run"), value_type=bool),
                         "waypoints_file": f"{a2_system_share}/config/scan_waypoints.example.yaml",
                         "reports_root": os.path.join(
-                            os.environ.get("A2_WORKSPACE", str(Path.home() / "a2_system_ws")),
+                            os.environ.get("A2_WORKSPACE", str(Path.home() / "ws/device-navigation")),
                             "runtime",
                             "reports",
                             "scan_mission",
